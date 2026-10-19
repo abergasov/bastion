@@ -52,6 +52,13 @@ reboot. Service restart and actual reboot behavior SHALL be tested separately.
 
 The ssh_notify integration SHALL use a pinned Nix package and runtime secrets
 instead of an unpinned checkout or Telegram credentials in Make arguments.
+The entire ssh_notify application configuration, including Telegram credentials
+and all other configuration values, SHALL be stored in Git as SOPS/age ciphertext
+using the same owner and VPS recipients as account-password secrets. Deployment
+and recovery SHALL use that encrypted configuration as their source. sops-nix
+SHALL decrypt the complete configuration into a protected runtime file under
+`/run/secrets` for the service to read; plaintext SHALL NOT enter Git, Nix
+expressions, `/nix/store`, logs or command arguments.
 Notification contents and delivery guarantees remain open; notifications SHALL NOT
 be presented as a complete audit trail without supporting guarantees.
 
@@ -59,3 +66,13 @@ be presented as a complete audit trail without supporting guarantees.
 - **WHEN** the integration is packaged and configured
 - **THEN** its source revision is fixed and credentials are supplied at runtime
 - **AND** no credentials appear in Make arguments or generated public build artifacts
+
+#### Scenario: Deploy the complete encrypted configuration
+- **WHEN** ssh_notify is deployed from the repository
+- **THEN** sops-nix decrypts the complete application configuration into a protected runtime file read by the service
+- **AND** all configuration values, including Telegram credentials, come from the encrypted configuration without manual reconstruction
+
+#### Scenario: Restore notification configuration on a replacement VPS
+- **WHEN** the VPS is recreated and the owner updates the SOPS recipients for the replacement host
+- **THEN** deployment restores the complete ssh_notify configuration from the encrypted repository state
+- **AND** credentials exposed in a host compromise are rotated before reuse

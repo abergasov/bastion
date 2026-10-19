@@ -69,9 +69,13 @@ current revocations before exposing VPN listeners. Git and NixOS system generati
 alone SHALL NOT count as a backup of runtime state. Real passwords, seeds, tokens,
 private keys and client profiles SHALL NOT be exposed in Git, documentation, logs
 or command arguments. Decrypted secrets SHALL NOT be interpolated into Nix
-expressions or derivations. The provisioning and recovery policy for non-VPN
-secrets, including the predefined account passwords and Telegram credentials,
-remains open.
+expressions or derivations. The predefined account-password material and the
+complete ssh_notify configuration, including Telegram credentials, SHALL use
+SOPS/age-encrypted Git storage with independent owner and VPS recipients, following
+the same recipient protection and replacement procedure as server VPN keys.
+sops-nix SHALL supply protected runtime files for provisioning and service use;
+initial deployment and recovery SHALL use the encrypted repository state.
+Credentials exposed during a host compromise SHALL be rotated before reuse.
 
 #### Scenario: Retain state on the existing server
 - **WHEN** the server reboots or its NixOS configuration is rebuilt

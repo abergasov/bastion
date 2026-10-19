@@ -41,10 +41,12 @@ an SSH key and switch to `root` using `su`, authenticated with the `root` passwo
 Setting account passwords SHALL NOT enable SSH password authentication.
 The secret handling requirements in
 [recovery-and-verification](../recovery-and-verification/spec.md) SHALL apply to
-password provisioning; the concrete secret delivery mechanism remains to be selected.
+password provisioning. Password material for both accounts SHALL be stored in Git
+only as SOPS/age ciphertext for the owner and VPS, and provisioned through
+sops-nix protected runtime files during initial installation and recreation.
 
 #### Scenario: Provision account passwords
-- **WHEN** initial server setup receives the predefined account passwords through the selected protected mechanism
+- **WHEN** initial server setup provisions the predefined account passwords from the SOPS/age-encrypted repository state through sops-nix
 - **THEN** it sets the supplied password for each of `admin` and `root`
 - **AND** SSH continues to accept public-key authentication only
 
