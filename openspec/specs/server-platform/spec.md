@@ -35,7 +35,9 @@ administration SHALL NOT require the Hetzner API.
 The server SHALL have public IPv4 and IPv6 addresses and use IP addresses as
 connection endpoints without requiring a domain. Installation SHALL be automated
 over SSH. The installation tool and concrete public addresses remain open choices.
-Public IPv6 does not itself select IPv6 routing inside either VPN.
+Both VPNs SHALL provide IPv4 and IPv6 internet access through this server as
+specified in [vpn-connectivity](../vpn-connectivity/spec.md); public IPv6
+addressing alone does not satisfy that requirement.
 
 #### Scenario: Install an IP-only host
 - **WHEN** the administrator starts an authorized installation on a prepared host

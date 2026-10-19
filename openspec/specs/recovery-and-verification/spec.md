@@ -137,8 +137,11 @@ export, recipient separation, and partial failure between local and server updat
 
 ### Requirement: Real-client and live-operation verification
 
-Readiness SHALL require real-client DNS/IPv6 checks on the supported operating
-systems, a fresh SSH login, log rotation, service restart and actual reboot
+Readiness SHALL require real-client IPv4/IPv6 routing and DNS checks for both VPNs
+on every supported operating system, including kill-switch enforcement during
+tunnel loss, reconnection and client network changes, and restored access through
+the VPS after reconnection. It SHALL also require a fresh SSH login, log rotation,
+service restart and actual reboot
 notification checks. A successful build SHALL NOT be treated as proof of remote
 reachability or client leak prevention.
 
