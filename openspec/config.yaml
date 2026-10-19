@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  Bastion is a private NixOS VPN server project. Communicate with the owner in Russian.
+  Read openspec/README.md and the relevant openspec/specs/<capability>/spec.md files.
+  The specs are target requirements migrated from AGENTS.md, not implemented behavior.
+  No NixOS configuration, management commands, builds or integration tests exist yet.
+  Design proposals and unresolved choices live in openspec/notes/design-and-open-questions.md.
+  Historical research lives in openspec/notes/research.md; recheck it before implementation.
+  Follow AGENTS.md for tools, workflow, authorization and secret-handling rules.
+  The current scope is documentation; implementation and deployment require a new request.
+
+rules:
+  specs:
+    - Keep confirmed requirements distinct from proposals and unresolved choices.
+    - Give each requirement at least one observable WHEN/THEN scenario.
+    - Do not claim that a specified capability is already implemented or verified.
+  design:
+    - Resolve choices relevant to the change with the owner; do not silently select proposals.
+    - Prefer the smallest readable solution using native NixOS modules and existing tools.
+  tasks:
+    - Include focused regression and integration checks appropriate to the changed behavior.
+    - Keep implementation, verification and deployment status explicit; report unrun checks.
