@@ -26,7 +26,8 @@ The interface SHALL provide these targets:
 
 #### Scenario: Add and list devices
 - **WHEN** the administrator runs `make vpn-add-wg CLIENT=phone` or `make vpn-add-open CLIENT=laptop`
-- **THEN** a separate device identity is added for the selected protocol on `VPN_HOST`
+- **THEN** a separate device keypair is generated and retained on the administrator's computer
+- **AND** only public enrollment data is deployed to `VPN_HOST` for the selected protocol
 - **AND** that protocol's list target shows the device without requiring a client argument
 
 #### Scenario: Export a selected device
@@ -61,17 +62,55 @@ tokens and private keys SHALL NOT be supplied in Make arguments.
 - **THEN** the operation fails before state mutation or unsafe shell/SSH use
 - **AND** an existing private key remains unchanged
 
+### Requirement: Local credential issuance and public server state
+
+The administrator's computer SHALL generate and retain the OpenVPN CA private
+key, VPN server keypairs and each device's OpenVPN or WireGuard keypair. OpenVPN
+certificates and CRLs SHALL be signed locally. CA issuance records and the device
+enrollment/revocation records SHALL be authoritative local state with restrictive
+permissions. Client profiles SHALL be assembled locally for transfer to devices.
+The CA private key and client private keys SHALL NOT be sent to the VPS, including
+in ciphertext decryptable by the VPS.
+
+For client enrollment, the VPS SHALL receive only public verification and access
+data: WireGuard public keys and assigned addresses, and OpenVPN CA certificate,
+signed certificates as needed, CRL and public device metadata. Its persistent
+runtime files SHALL be the deployed representation of local enrollment/revocation
+records, outside Git, `/nix/store` and NixOS system generations. NixOS SHALL
+configure services/networking without a competing membership list.
+
+The VPS still requires its own VPN server private keys. These SHALL be provisioned
+separately through SOPS and sops-nix as specified in
+[recovery-and-verification](../recovery-and-verification/spec.md). Administrative
+access to deployed state SHALL require root/sudo; services SHALL receive only
+the file access necessary for their operation.
+
+#### Scenario: Manage membership from the administrator's computer
+- **WHEN** a local Make command adds or revokes a device over authenticated SSH
+- **THEN** it updates the authoritative local records and the corresponding persistent and live access state on the VPS
+- **AND** no CA or client private key is transmitted to the VPS
+
+#### Scenario: Enroll an OpenVPN device
+- **WHEN** the administrator adds an OpenVPN device
+- **THEN** its keypair and signed certificate are created locally and its private key stays off the VPS
+- **AND** the VPS verifies client certificates using the public CA certificate without the CA private key
+
+#### Scenario: Rebuild or roll back NixOS
+- **WHEN** the server's NixOS configuration is rebuilt or rolled back
+- **THEN** the current deployed membership and revocation state remains effective
+- **AND** an older system generation does not restore old membership
+
 ### Requirement: Authenticated and consistent mutations
 
 Privileged changes SHALL use authenticated SSH with host-key verification and sudo.
-Commands SHALL report success only after both persistent and live access state are
-updated and verified, and SHALL clearly report partial failure. Shared mutable
-state SHALL use atomic updates and a simple lock. The membership source of truth
-and revocation-state ownership SHALL be defined before lifecycle implementation;
-competing peer lists SHALL NOT be maintained.
+Commands SHALL report success only after authoritative local records and both
+persistent and live server access state are updated and verified, and SHALL
+clearly report partial failure. Shared mutable state SHALL use atomic updates
+and a simple lock. Server state SHALL be derived from local enrollment/revocation
+records; competing sources of truth SHALL NOT be maintained.
 
 #### Scenario: One part of a change fails
-- **WHEN** a command updates persistent state but cannot update or verify live state, or vice versa
+- **WHEN** a command updates local records or server state but cannot complete or verify the other required updates
 - **THEN** it reports partial failure rather than success
 
 #### Scenario: Concurrent changes
@@ -80,13 +119,15 @@ competing peer lists SHALL NOT be maintained.
 
 ### Requirement: Private profile handling
 
+Client private keys SHALL be retained in protected local storage for re-export.
 Exported profiles SHALL be private local files with restrictive permissions and
-excluded from Git. A profile export SHALL NOT promise a private key that was never
-retained. Key generation location and retention remain open design choices.
+excluded from Git. Exports SHALL use local keys and SHALL NOT retrieve client
+private keys from the VPS. A profile export SHALL NOT promise a private key
+that is unavailable or silently replace it.
 Deleting a downloaded profile SHALL NOT be represented as revocation.
 
-#### Scenario: Private key was not retained
-- **WHEN** an export would require a private key unavailable under the chosen retention policy
+#### Scenario: Local private key is missing
+- **WHEN** an export requires a local private key that has been lost or removed
 - **THEN** the command explains the limitation without silently replacing that key
 
 #### Scenario: Delete a local profile
@@ -105,17 +146,21 @@ persistent source loaded after restart or rebuild.
 
 ### Requirement: Effective OpenVPN revocation
 
-OpenVPN revocation SHALL deploy an effective CRL and promptly terminate existing
-access. A CRL update alone SHALL NOT be presented as immediate disconnection.
-The implementation SHALL test a local-only management mechanism or document an
-agreed brief service restart. CRL readability, validity, expiry and missing-file
-behavior SHALL be verified; a `crl-verify` setting alone is not evidence of
-fail-closed behavior.
+OpenVPN revocation SHALL update local issuance/revocation records, sign an updated
+CRL locally, deploy it and promptly terminate existing access. A CRL update alone
+SHALL NOT be presented as immediate disconnection.
+After deploying the updated CRL, the implementation SHALL briefly restart OpenVPN
+to terminate existing sessions. The owner accepts interruption of all OpenVPN
+clients during this restart. Success SHALL require verification that the service
+is running again and the revoked client cannot reconnect. CRL readability,
+validity, expiry and missing-file behavior SHALL be verified; a `crl-verify`
+setting alone is not evidence of fail-closed behavior.
 
 #### Scenario: Revoke an active client
 - **WHEN** OpenVPN revocation reports success
 - **THEN** the revoked certificate cannot establish a new connection
-- **AND** existing access has been terminated through the selected mechanism
+- **AND** existing sessions have been terminated by a brief OpenVPN restart
+- **AND** non-revoked clients can reconnect after the restart
 
 #### Scenario: Unusable CRL
 - **WHEN** a CRL is missing, unreadable, invalid or expired during verification
@@ -126,8 +171,10 @@ fail-closed behavior.
 
 A reboot, NixOS rebuild, rollback, backup restore or server recreation SHALL NOT
 silently reauthorize revoked credentials. Restores SHALL reconcile current
-revocations before exposing VPN listeners. The storage layout remains an open
-choice, subject to this invariant.
+revocations from authoritative local records before exposing VPN listeners.
+Local records and deployed server runtime state SHALL remain independent of
+NixOS system generations. If current revocation state is unavailable, recovery
+SHALL use fresh trust material rather than restore stale access grants.
 
 #### Scenario: Restore older state
 - **WHEN** a previous system generation or backup contains a formerly authorized device

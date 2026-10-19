@@ -24,8 +24,8 @@ to its scope; it must not silently turn proposals into requirements.
 ## Supporting context
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
-  the unapproved options, including IPv6 routing, DNS setup, secret tooling,
-  credential ownership, fail2ban parameters and recovery choices.
+  the unapproved options, including IPv6 routing, DNS setup, non-VPN secret provisioning,
+  local secret storage/backup tooling, fail2ban parameters and recovery choices.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this
   migration and is not a migration specification.
