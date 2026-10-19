@@ -1,7 +1,7 @@
 # Bastion specifications
 
-These specifications capture the target behavior from `AGENTS.md` as of
-2026-10-19. They are a requirements baseline, **not a record of implemented or
+These specifications capture the target behavior from `AGENTS.md` and subsequent
+owner decisions as of 2026-10-19. They are a requirements baseline, **not a record of implemented or
 verified functionality**. There are no NixOS configurations, management commands,
 build targets, or integration tests yet. This migration authorizes documentation
 only; it does not authorize implementation, deployment, or server deletion.
@@ -25,7 +25,7 @@ to its scope; it must not silently turn proposals into requirements.
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
   the unapproved options, including local-network access, non-VPN secret provisioning,
-  local secret storage/backup tooling and recovery choices.
+  optional additional backups and recovery choices.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this
   migration and is not a migration specification.

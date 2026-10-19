@@ -68,7 +68,10 @@ The administrator's computer SHALL generate and retain the OpenVPN CA private
 key, VPN server keypairs and each device's OpenVPN or WireGuard keypair. OpenVPN
 certificates and CRLs SHALL be signed locally. CA issuance records and the device
 enrollment/revocation records SHALL be authoritative local state with restrictive
-permissions. Client profiles SHALL be assembled locally for transfer to devices.
+permissions. This state SHALL be saved as owner-only age ciphertext for Git
+storage, with the owner's private age key kept in KeePassXC, as specified in
+[recovery-and-verification](../recovery-and-verification/spec.md).
+Client profiles SHALL be assembled locally for transfer to devices.
 The CA private key and client private keys SHALL NOT be sent to the VPS, including
 in ciphertext decryptable by the VPS.
 
@@ -105,8 +108,9 @@ the file access necessary for their operation.
 Privileged changes SHALL use authenticated SSH as `admin` with host-key
 verification and elevate to `root` through `su` authenticated with the `root`
 password, following [server-administration](../server-administration/spec.md).
-Commands SHALL report success only after authoritative local records and both
-persistent and live server access state are updated and verified, and SHALL
+Commands SHALL report success only after authoritative local records, their
+age-encrypted storage, and both persistent and live server access state are
+updated and verified, and SHALL
 clearly report partial failure. Shared mutable state SHALL use atomic updates
 and a simple lock. Server state SHALL be derived from local enrollment/revocation
 records; competing sources of truth SHALL NOT be maintained.

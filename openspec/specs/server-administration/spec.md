@@ -16,6 +16,8 @@ key. Password authentication SHALL be forbidden. Administration SHALL NOT requir
 connectivity or a public source-IP allowlist. For inbound administrator access,
 only the administrator's public key SHALL be placed on the server; the previous
 Ansible private-key restoration pattern SHALL NOT be reproduced.
+The installed `admin` account SHALL authorize the owner's existing Ed25519 public
+key used for initial VPS access.
 
 #### Scenario: Administer without a VPN
 - **WHEN** an authorized administrator connects from a public address without a VPN

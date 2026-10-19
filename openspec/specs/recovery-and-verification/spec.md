@@ -36,8 +36,9 @@ the revocation invariant in
 Local CA, client keys and enrollment/revocation records SHALL remain on the
 administrator's computer across VPS lifecycle operations. Deployed public access
 state and necessary VPN server secrets SHALL persist across ordinary reboots and
-NixOS rebuilds. Additional backups of local credential state are optional;
-recovery may use fresh issuance if that state is lost.
+NixOS rebuilds. Local credential state SHALL use the owner-only age-encrypted
+repository storage defined below. Additional backups are optional; recovery may
+use fresh issuance if that state and its usable encrypted copies are lost.
 Server VPN keys SHALL use the encrypted repository storage defined below. If credential
 backup/restore is supported, backups SHALL be encrypted and restores SHALL enforce
 current revocations before exposing VPN listeners. Git and NixOS system generations
@@ -60,6 +61,46 @@ remains open.
 - **WHEN** generated files, permissions, logs and Nix build artifacts are checked
 - **THEN** plaintext secret material is absent from public artifacts and command arguments
 - **AND** secret files have restrictive access permissions
+
+### Requirement: Owner-only age encryption of local credential state
+
+The OpenVPN CA private key, client private keys, CA issuance records and
+authoritative device enrollment/revocation records SHALL be retained locally
+and stored in Git only as age-encrypted files. Encryption SHALL use the owner's
+public age recipient; neither the VPS recipient nor any identity available on
+the VPS SHALL be able to decrypt this state. Server VPN keys SHALL continue to
+use the separate SOPS/sops-nix scheme below.
+
+The owner's private age key SHALL be stored in KeePassXC, outside the project
+repository and off the VPS. Its protected backup SHALL remain recoverable
+independently of the administrator's computer; it SHALL NOT depend solely on
+files encrypted with that same age key. Decrypted working files SHALL remain
+outside the repository with restrictive permissions and SHALL NOT enter logs,
+command arguments or Nix build artifacts.
+
+Management operations SHALL preserve updated local credential state in encrypted
+form before reporting success. Committing and pushing ciphertext SHALL NOT be
+required for each operation. Repository history SHALL NOT be treated as proof
+that restored membership or revocation records are current; restores SHALL
+enforce the revocation requirements in
+[device-lifecycle](../device-lifecycle/spec.md).
+
+#### Scenario: Store local credentials in the repository
+- **WHEN** local credential state is prepared for storage in Git
+- **THEN** CA and client private keys and issuance/enrollment/revocation records are encrypted to the owner with age
+- **AND** the owner can decrypt them using the private age key kept in KeePassXC
+- **AND** neither plaintext state nor the private age key is included in the repository
+- **AND** the VPS identity cannot decrypt the files
+
+#### Scenario: Persist an enrollment or revocation
+- **WHEN** a management operation changes local credential state
+- **THEN** success requires saving the updated age-encrypted state as well as the required server updates
+- **AND** a failure to save encrypted state is reported as a partial failure, not success
+
+#### Scenario: Restore encrypted local state
+- **WHEN** credential state is recovered from repository ciphertext using the owner's age key
+- **THEN** decryption is verified before the state is used
+- **AND** an older repository revision does not silently reauthorize revoked devices
 
 ### Requirement: Encrypted server VPN keys in Git
 
