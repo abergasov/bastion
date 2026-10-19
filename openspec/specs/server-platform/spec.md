@@ -19,6 +19,21 @@ server are not required.
 - **THEN** its services and persistent networking are described by NixOS configuration
 - **AND** installation does not depend on importing credentials from the previous server
 
+### Requirement: Small VPS resource target
+
+Bastion SHALL target servers with approximately 1 vCPU, 2 GB RAM and 20 GB of
+local disk for the expected personal VPN workload. This is a deployment and
+verification target, not a measured minimum or a guarantee of VPN throughput.
+Installation, normal service operation and system updates SHALL be verified on
+this resource class, including memory use and disk headroom. Any swap or external
+build resources needed by the verified workflow SHALL be documented. A specific
+provider plan, price or traffic allowance is not required.
+
+#### Scenario: Verify the target resource class
+- **WHEN** implementation readiness is assessed for a host with approximately 1 vCPU, 2 GB RAM and 20 GB disk
+- **THEN** installation, both VPN services and a system update are checked within those resources
+- **AND** observed resource use, VPN throughput and any unverified limits are reported
+
 ### Requirement: Provider-independent host configuration
 
 Bastion SHALL support Hetzner initially and keep provider-specific disk, boot and

@@ -10,7 +10,10 @@ server ready. No Nix evaluation, build or VM tests have been run for this baseli
 ### Requirement: Recovery through server recreation
 
 Bastion SHALL use server recreation as the recovery policy after failure. Tested
-console/rescue access and an emergency root password SHALL NOT be prerequisites.
+console/rescue access and an emergency root password SHALL NOT be prerequisites
+for recovery. This does not remove the requirement to set the predefined `root`
+and `admin` passwords during initial provisioning under
+[server-administration](../server-administration/spec.md).
 Preserving existing client access across server recreation is not required for
 this personal service. CA and client secrets reside on the administrator's
 computer, so VPS loss alone does not destroy them. Recovery SHALL support fresh issuance
@@ -42,7 +45,8 @@ alone SHALL NOT count as a backup of runtime state. Real passwords, seeds, token
 private keys and client profiles SHALL NOT be exposed in Git, documentation, logs
 or command arguments. Decrypted secrets SHALL NOT be interpolated into Nix
 expressions or derivations. The provisioning and recovery policy for non-VPN
-secrets, such as Telegram credentials, remains open.
+secrets, including the predefined account passwords and Telegram credentials,
+remains open.
 
 #### Scenario: Retain state on the existing server
 - **WHEN** the server reboots or its NixOS configuration is rebuilt
@@ -123,7 +127,9 @@ treated as revoking access to historical ciphertext or already obtained secrets.
 Once implemented, Bastion SHALL run relevant formatting/static checks,
 `nix flake check` and a build of the selected host's system closure. Focused NixOS
 integration tests SHALL cover both tunnels, permitted and blocked forwarding,
-public key-only SSH, fail2ban matching and ban/unban on IPv4/IPv6, device add/revoke
+public key-only SSH restricted to `admin`, rejection of direct root SSH login,
+initial `admin`/`root` password setup, switching from `admin` to `root` through
+`su` with the root password, fail2ban matching and ban/unban on IPv4/IPv6, device add/revoke
 across reboot/rebuild, secret permissions and notifications using a local mock
 endpoint. Recreation and supported rollback/restore procedures SHALL be tested,
 including missing/expired CRLs, active-client revocation, local-only issuance and

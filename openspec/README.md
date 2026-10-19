@@ -12,7 +12,7 @@ only; it does not authorize implementation, deployment, or server deletion.
 | --- | --- |
 | [server-platform](specs/server-platform/spec.md) | Reproducible NixOS host, provider independence, installation |
 | [vpn-connectivity](specs/vpn-connectivity/spec.md) | Protocols, endpoints, clients, full tunnel and DNS |
-| [server-administration](specs/server-administration/spec.md) | Public key-only SSH and fail2ban |
+| [server-administration](specs/server-administration/spec.md) | Admin-only key-authenticated SSH, account passwords, su and fail2ban |
 | [device-lifecycle](specs/device-lifecycle/spec.md) | Make interface, credentials, export, revocation and consistency |
 | [ssh-notifications](specs/ssh-notifications/spec.md) | SSH login and boot/reboot Telegram notifications |
 | [recovery-and-verification](specs/recovery-and-verification/spec.md) | Recovery, backups, acceptance checks and safe rollout |
@@ -25,7 +25,7 @@ to its scope; it must not silently turn proposals into requirements.
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
   the unapproved options, including local-network access, non-VPN secret provisioning,
-  local secret storage/backup tooling, fail2ban parameters and recovery choices.
+  local secret storage/backup tooling and recovery choices.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this
   migration and is not a migration specification.

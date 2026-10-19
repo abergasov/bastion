@@ -82,7 +82,7 @@ configure services/networking without a competing membership list.
 The VPS still requires its own VPN server private keys. These SHALL be provisioned
 separately through SOPS and sops-nix as specified in
 [recovery-and-verification](../recovery-and-verification/spec.md). Administrative
-access to deployed state SHALL require root/sudo; services SHALL receive only
+access to deployed state SHALL require root privileges; services SHALL receive only
 the file access necessary for their operation.
 
 #### Scenario: Manage membership from the administrator's computer
@@ -102,7 +102,9 @@ the file access necessary for their operation.
 
 ### Requirement: Authenticated and consistent mutations
 
-Privileged changes SHALL use authenticated SSH with host-key verification and sudo.
+Privileged changes SHALL use authenticated SSH as `admin` with host-key
+verification and elevate to `root` through `su` authenticated with the `root`
+password, following [server-administration](../server-administration/spec.md).
 Commands SHALL report success only after authoritative local records and both
 persistent and live server access state are updated and verified, and SHALL
 clearly report partial failure. Shared mutable state SHALL use atomic updates
