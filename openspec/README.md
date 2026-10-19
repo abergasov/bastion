@@ -24,7 +24,7 @@ to its scope; it must not silently turn proposals into requirements.
 ## Supporting context
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
-  the unapproved options, including local-network access, non-VPN secret provisioning,
+  the unapproved options, including client application selection, non-VPN secret provisioning,
   optional additional backups and recovery choices.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this

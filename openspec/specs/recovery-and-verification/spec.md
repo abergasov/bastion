@@ -17,9 +17,23 @@ and `admin` passwords during initial provisioning under
 Preserving existing client access across server recreation is not required for
 this personal service. CA and client secrets reside on the administrator's
 computer, so VPS loss alone does not destroy them. Recovery SHALL support fresh issuance
-and replacement client profiles using the recreated server's endpoint. Encrypted
-server VPN keys may be retained through the recipient replacement procedure below;
-these keys alone SHALL NOT be treated as a backup of CA or membership state.
+and replacement client profiles using the recreated server's endpoint. Every
+initial server creation and VPS recreation SHALL use a new OpenVPN server private
+key and certificate generated on the administrator's computer. Recreation SHALL
+NOT restore the previous OpenVPN server key or certificate. Routine reboots and
+NixOS rebuilds SHALL preserve the current identity. A WireGuard server key may be
+retained on ordinary VPS replacement through the recipient replacement procedure
+below; these keys alone SHALL NOT be treated as a backup of CA or membership state.
+
+After recreation, the administrator SHALL transfer replacement OpenVPN profiles
+from their trusted computer to each device. Each profile SHALL pin only the new
+certificate's SHA-256 fingerprint using `peer-fingerprint`. Old profiles SHALL be
+removed or disabled on the devices, including automatic connection settings, and
+existing sessions SHALL be disconnected before connecting with the new profile.
+Recreating the VPS or revoking its certificate locally SHALL NOT be described as
+automatically updating client trust: an unchanged profile still trusts its old
+fingerprint. Recovery for a device SHALL require verifying that its new profile
+connects to the replacement server and rejects the old server certificate.
 Recreation SHALL preserve
 the revocation invariant in
 [device-lifecycle](../device-lifecycle/spec.md).
@@ -30,6 +44,16 @@ the revocation invariant in
 - **AND** it does not depend on a tested console or emergency root password
 - **AND** fresh issuance does not require a backup of the previous VPN credentials
 - **AND** previously revoked devices do not silently regain access
+
+#### Scenario: Replace the OpenVPN server identity
+- **WHEN** a VPS is recreated, whether after ordinary loss or compromise
+- **THEN** a fresh OpenVPN server key and certificate are generated locally and the new certificate has a different SHA-256 fingerprint
+- **AND** replacement device profiles contain only the new fingerprint
+- **AND** after old profiles are removed or disabled and sessions disconnected, each updated device connects to the replacement and rejects the old certificate, even if the CA is unchanged
+
+#### Scenario: Rebuild the existing server
+- **WHEN** the existing VPS reboots or its NixOS configuration is rebuilt without server recreation
+- **THEN** its OpenVPN key, certificate and fingerprint remain unchanged and existing profiles remain usable
 
 ### Requirement: Persistent credential state and protected secrets
 
@@ -135,7 +159,9 @@ identity available on the VPS.
 - **WHEN** a replacement VPS has a new age key and the owner retains their private age key
 - **THEN** the owner replaces the old VPS recipient with the verified new public recipient using `sops updatekeys` and commits the updated ciphertext
 - **AND** the owner remains a recipient and the new VPS can decrypt without the old VPS private age key
-- **AND** server VPN keys need not change solely because the age recipient changed
+- **AND** the newly generated OpenVPN server key is saved as SOPS ciphertext for the owner and replacement VPS before deployment
+- **AND** the WireGuard server key may be retained if it was not exposed
+- **AND** OpenVPN profiles are replaced and verified as required above; changing the age recipient alone is insufficient
 - **AND** missing CA or membership state still requires fresh issuance and enrollment
 
 ### Requirement: Recovery after host compromise
@@ -150,8 +176,8 @@ root-compromised server.
 
 Recovery from a confirmed full host compromise SHALL recreate the VPS, replace
 its age identity and rotate exposed server VPN keys. The exposed OpenVPN server
-certificate SHALL be revoked locally, and client profiles/trust settings SHALL
-be updated as needed to reject the old server identity. Local CA and client keys
+certificate SHALL be revoked locally, and client profiles SHALL be replaced with
+profiles pinning only the new certificate as required above. Local CA and client keys
 need replacement if exposed; VPS compromise alone does not imply their exposure.
 Other secrets accessible to the compromised host SHALL also be rotated.
 Removing an age recipient SHALL NOT be
@@ -189,7 +215,10 @@ on every supported operating system, including kill-switch enforcement during
 tunnel loss, reconnection and client network changes, and restored access through
 the VPS after reconnection. It SHALL also require a fresh SSH login, log rotation,
 service restart and actual reboot
-notification checks. A successful build SHALL NOT be treated as proof of remote
+notification checks. On each supported OS, OpenVPN checks SHALL verify acceptance
+of the current pinned server certificate and rejection of the old certificate
+after recreation, including when both certificates share the same CA.
+A successful build SHALL NOT be treated as proof of remote
 reachability or client leak prevention.
 
 #### Scenario: Build passes but client checks are absent

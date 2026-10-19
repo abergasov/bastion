@@ -131,6 +131,19 @@ excluded from Git. Exports SHALL use local keys and SHALL NOT retrieve client
 private keys from the VPS. A profile export SHALL NOT promise a private key
 that is unavailable or silently replace it.
 Deleting a downloaded profile SHALL NOT be represented as revocation.
+OpenVPN exports SHALL include only the current locally issued server certificate's
+SHA-256 fingerprint as `peer-fingerprint`, following
+[vpn-connectivity](../vpn-connectivity/spec.md). If the current server certificate
+is unavailable, export SHALL fail rather than omit the pin or reuse a stale one.
+
+#### Scenario: Export after server recreation
+- **WHEN** an authorized device's OpenVPN profile is exported after the replacement server's new certificate is issued
+- **THEN** the profile contains only the new server certificate's fingerprint and the current endpoint
+- **AND** no previous server fingerprint is retained as an alternative
+
+#### Scenario: Current server certificate is unavailable
+- **WHEN** an OpenVPN export cannot determine the current locally issued server certificate
+- **THEN** export fails without producing an unpinned profile or one pinned to a stale certificate
 
 #### Scenario: Local private key is missing
 - **WHEN** an export requires a local private key that has been lost or removed

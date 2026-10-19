@@ -18,6 +18,27 @@ guarantees bypass of traffic filtering, anonymity or absolute security.
 - **THEN** OpenVPN connects to TCP/443 and WireGuard connects to UDP/443
 - **AND** neither connection requires a domain name or an HTTPS service
 
+### Requirement: Pinned OpenVPN server certificate
+
+OpenVPN client profiles SHALL contain exactly the current server certificate's
+SHA-256 fingerprint using `peer-fingerprint`. Clients SHALL reject a different
+server certificate, even if signed by the same trusted CA. The fingerprint SHALL
+come from the certificate issued on the administrator's computer and be included
+in the locally generated `.ovpn` profile; it SHALL NOT be learned automatically
+from the server during connection. No separate fingerprint file is required.
+Fingerprint enforcement SHALL be verified in the selected client application on
+Android, iOS, Windows, macOS and Linux before readiness is declared. Unsupported
+or ignored `peer-fingerprint` settings SHALL NOT be worked around by removing
+the pin or falling back to CA-only verification.
+
+#### Scenario: Connect to the pinned server
+- **WHEN** a supported client connects to the current server using a valid device profile
+- **THEN** the server certificate matches the profile's fingerprint and the connection succeeds with all other required checks satisfied
+
+#### Scenario: Reject a different server certificate
+- **WHEN** a server presents a certificate whose SHA-256 fingerprint differs from the profile's pin, including a certificate signed by the same CA
+- **THEN** the client rejects the connection without accepting or automatically learning the new fingerprint
+
 ### Requirement: Supported clients and scale
 
 Bastion SHALL support phones, computers and tablets running Android, iOS, Windows,
@@ -47,9 +68,8 @@ Google is used only while Cloudflare is unavailable or that clients immediately
 return to Cloudflare after recovery. Failover SHALL be verified on each supported OS.
 Client routing and kill-switch enforcement SHALL be configured and tested for
 both VPNs on Android, iOS, Windows, macOS and Linux before readiness is declared.
-Local-network exceptions remain an open choice and SHALL be specified and tested
-per supported operating system; server configuration alone is not proof that
-clients cannot bypass the VPN.
+Client isolation and local-network blocking SHALL be verified as specified below;
+server configuration alone is not proof that clients cannot bypass the VPN.
 
 #### Scenario: Access the internet with a tunnel established
 - **WHEN** a supported client accesses IPv4 and IPv6 internet destinations or sends DNS requests with either VPN established
@@ -65,6 +85,27 @@ clients cannot bypass the VPN.
 - **WHEN** Cloudflare `1.1.1.1` is unreachable through an established VPN tunnel
 - **THEN** the supported client can resolve names using Google `8.8.8.8` through that tunnel
 - **AND** switching delay and resolver selection after Cloudflare recovers are checked and documented for that client
+
+### Requirement: Client isolation and local-network blocking
+
+Bastion SHALL block IPv4 and IPv6 traffic between VPN clients, both within each
+VPN and between OpenVPN and WireGuard, including devices belonging to the same
+user. Clients SHALL NOT access their local network while the VPN is enabled,
+including during tunnel loss and reconnection. Client configurations SHALL NOT
+enable local-network access exceptions. Traffic strictly necessary to establish
+or restore the underlying network connection and VPN SHALL remain possible;
+this SHALL NOT permit general access to local-network services.
+These restrictions SHALL be configured and verified for both VPNs on Android,
+iOS, Windows, macOS and Linux.
+
+#### Scenario: Attempt communication between VPN clients
+- **WHEN** a VPN client attempts IPv4 or IPv6 communication with another VPN client in the same VPN or the other VPN
+- **THEN** the communication is blocked, including between devices owned by the same user
+
+#### Scenario: Attempt local-network access
+- **WHEN** a supported client attempts to access local-network services over IPv4 or IPv6 while the VPN is enabled, including during tunnel loss and reconnection
+- **THEN** access is blocked
+- **AND** traffic necessary to establish or restore network connectivity and the VPN remains possible without allowing general local-network access
 
 ### Requirement: Block internet access during tunnel loss
 
