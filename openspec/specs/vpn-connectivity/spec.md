@@ -33,18 +33,30 @@ bandwidth or traffic quotas.
 ### Requirement: Full-tunnel internet and DNS
 
 Both VPNs SHALL carry all client internet traffic, including DNS, through the VPN.
-DNS SHALL use a public resolver accepted by the owner: `1.1.1.1` or `8.8.8.8`.
-The final resolver and direct configuration versus a server-side forwarder remain
-open. IPv6 routing, kill-switch behavior and local-network exceptions SHALL be
+VPN client DNS configuration SHALL list Cloudflare `1.1.1.1` first as the default
+resolver and Google `8.8.8.8` second as the backup.
+Clients SHALL query the selected public resolver directly through the VPN tunnel
+and the VPS's internet connection. Bastion SHALL NOT deploy a separate DNS service
+or DNS forwarder on the VPS for VPN clients. Both resolver addresses SHALL be
+routed through the VPN. Resolver selection and failover depend on the client OS
+and VPN application; list order alone SHALL NOT be presented as a guarantee that
+Google is used only while Cloudflare is unavailable or that clients immediately
+return to Cloudflare after recovery. Failover SHALL be verified on each supported OS.
+IPv6 routing, kill-switch behavior and local-network exceptions SHALL be
 specified and tested per supported operating system before readiness is declared;
 disabling IPv6 only on the server is not proof that clients cannot bypass the VPN.
 
 #### Scenario: Access the internet with a tunnel established
 - **WHEN** a supported client sends internet traffic or DNS requests through either VPN
 - **THEN** that traffic traverses the VPN
-- **AND** DNS reaches the selected public resolver through the tunnel
+- **AND** the client queries the selected public resolver directly through the tunnel and the VPS, without a DNS service on the VPS
 
 #### Scenario: Verify IPv6 and tunnel-loss behavior
 - **WHEN** the implementation is checked on a supported operating system with IPv6 available
 - **THEN** client behavior is checked for IPv6 bypass and against the agreed tunnel-loss policy
 - **AND** server public dual-stack addressing alone is not accepted as that verification
+
+#### Scenario: Default DNS resolver is unavailable
+- **WHEN** Cloudflare `1.1.1.1` is unreachable through an established VPN tunnel
+- **THEN** the supported client can resolve names using Google `8.8.8.8` through that tunnel
+- **AND** switching delay and resolver selection after Cloudflare recovers are checked and documented for that client
