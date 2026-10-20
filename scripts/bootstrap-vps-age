@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf '%s\n' "bootstrap-vps-age: $*" >&2
+  exit 1
+}
+
+[ "$#" -eq 3 ] || die "usage: bootstrap-vps-age HOST_INPUT INSTALL_DIR ROOT_DIR"
+host_input=$1
+install_dir=$2
+root_dir=$3
+
+read_input() {
+  nix eval --raw --file "$host_input" --apply "input: input.$1"
+}
+
+expected_recipient=$(read_input vpsAgeRecipient)
+owner_recipient=$(read_input ownerAgeRecipient)
+identity_file=$(read_input vpsAgeIdentityFile)
+secrets_file=$(read_input sopsSecretsFile)
+
+[[ "$expected_recipient" =~ ^age1[ac-hj-np-z02-9]{58}$ ]] \
+  || die "vpsAgeRecipient must be an age public recipient"
+[[ "$owner_recipient" =~ ^age1[ac-hj-np-z02-9]{58}$ ]] \
+  || die "ownerAgeRecipient must be an age public recipient"
+[ -f "$identity_file" ] || die "vpsAgeIdentityFile must name an existing local identity"
+[ "$(stat -c '%a' "$identity_file")" = 600 ] \
+  || die "vpsAgeIdentityFile must have mode 0600"
+case "$secrets_file" in
+  secrets/*.yaml|secrets/*.yml) ;;
+  *) die "sopsSecretsFile must be a relative YAML file under secrets/" ;;
+esac
+case "$secrets_file" in
+  *..*|/*) die "sopsSecretsFile must not leave the repository" ;;
+esac
+
+command -v age-keygen >/dev/null || die "age-keygen is required to verify vpsAgeIdentityFile"
+derived_recipient=$(age-keygen -y "$identity_file")
+[ "$derived_recipient" = "$expected_recipient" ] \
+  || die "vpsAgeIdentityFile does not match vpsAgeRecipient"
+
+source_secret="$root_dir/$secrets_file"
+[ -f "$source_secret" ] || die "missing encrypted SOPS file: $secrets_file"
+
+extra_files_dir=$(mktemp -d)
+cleanup() {
+  rm -rf "$extra_files_dir"
+}
+trap cleanup ERR
+chmod 700 "$extra_files_dir"
+install -D -m 600 "$identity_file" "$extra_files_dir/var/lib/sops-nix/age/key.txt"
+command -v sops >/dev/null || die "sops is required to verify encrypted server secrets"
+grep -Fqx "        - recipient: $expected_recipient" "$source_secret" \
+  || die "encrypted SOPS file does not include vpsAgeRecipient"
+grep -Fqx "        - recipient: $owner_recipient" "$source_secret" \
+  || die "encrypted SOPS file does not include ownerAgeRecipient"
+for secret_name in admin-password-hash root-password-hash openvpn-server-key wireguard-server-key; do
+  SOPS_AGE_KEY_FILE="$extra_files_dir/var/lib/sops-nix/age/key.txt" \
+    sops -d --extract "[\"$secret_name\"]" "$source_secret" >/dev/null \
+    || die "encrypted SOPS file is missing or cannot decrypt $secret_name"
+done
+mkdir -p "$install_dir/$(dirname "$secrets_file")"
+cp -p "$source_secret" "$install_dir/$secrets_file"
+
+trap - ERR
+printf '%s\n' "$extra_files_dir"

@@ -5,3 +5,4 @@ install-bastion:
 
 test:
 	./tests/install-bastion-test.sh
+	./tests/secrets-static-test.sh

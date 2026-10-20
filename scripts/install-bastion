@@ -19,15 +19,31 @@ read_input() {
 source_user=$(read_input sourceUser)
 target_host=$(read_input ipv4Address)
 expected_host_key=$(read_input expectedEd25519HostKey)
+admin_authorized_key=$(read_input adminAuthorizedKey)
+owner_age_recipient=$(read_input ownerAgeRecipient)
+vps_age_recipient=$(read_input vpsAgeRecipient)
+vps_age_identity_file=$(read_input vpsAgeIdentityFile)
+sops_secrets_file=$(read_input sopsSecretsFile)
 
 [ -n "$source_user" ] && [ "$source_user" != "null" ] || die "sourceUser must be set"
 [ -n "$target_host" ] && [ "$target_host" != "null" ] || die "ipv4Address must be set"
 [[ "$expected_host_key" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+$ ]] \
   || die "expectedEd25519HostKey must be an ssh-ed25519 public host key"
+[[ "$admin_authorized_key" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+($|[[:space:]]) ]] \
+  || die "adminAuthorizedKey must be an ssh-ed25519 public key"
+[ -n "$owner_age_recipient" ] && [ "$owner_age_recipient" != "null" ] \
+  || die "ownerAgeRecipient must be set"
+[ -n "$vps_age_recipient" ] && [ "$vps_age_recipient" != "null" ] \
+  || die "vpsAgeRecipient must be set"
+[ -n "$vps_age_identity_file" ] && [ "$vps_age_identity_file" != "null" ] \
+  || die "vpsAgeIdentityFile must be set"
+[ -n "$sops_secrets_file" ] && [ "$sops_secrets_file" != "null" ] \
+  || die "sopsSecretsFile must be set"
 
 known_hosts=$(mktemp)
 install_dir=$(mktemp -d)
-trap 'rm -f "$known_hosts"; rm -rf "$install_dir"' EXIT
+extra_files_dir=
+trap 'rm -f "$known_hosts"; rm -rf "$install_dir"; [ -z "$extra_files_dir" ] || rm -rf "$extra_files_dir"' EXIT
 chmod 600 "$known_hosts"
 printf '%s %s\n' "$target_host" "$expected_host_key" > "$known_hosts"
 
@@ -44,10 +60,12 @@ ssh "${ssh_options[@]}" "$source_user@$target_host" 'id -u | grep -qx 0 || sudo 
 
 cp -R flake.nix flake.lock modules hosts patches "$install_dir"
 cp "$host_input" "$install_dir/hosts/bastion/host-input.nix"
+extra_files_dir=$(scripts/bootstrap-vps-age "$host_input" "$install_dir" "$root_dir")
 cd "$install_dir"
 
 nix run .#nixos-anywhere -- \
   --flake .#bastion \
+  --extra-files "$extra_files_dir" \
   --target-host "$source_user@$target_host" \
   --ssh-option "BatchMode=yes" \
   --ssh-option "UserKnownHostsFile=$known_hosts" \

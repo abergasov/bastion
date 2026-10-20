@@ -13,6 +13,11 @@
       url = "github:nix-community/nixos-anywhere/1.13.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    sops-nix = {
+      url = "github:Mic92/sops-nix/44931708c62937c2b1bf7953902989fa5bb9ee1b";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -20,6 +25,7 @@
       nixpkgs,
       disko,
       nixos-anywhere,
+      sops-nix,
       ...
     }:
     let
@@ -35,11 +41,22 @@
 
       nixosConfigurations.bastion = nixpkgs.lib.nixosSystem {
         inherit system;
+        specialArgs = {
+          hostInput = null;
+          sopsFile = null;
+        };
         modules = [
           disko.nixosModules.disko
+          sops-nix.nixosModules.sops
           ./modules/platform.nix
+          ./modules/secrets-administration.nix
           ./hosts/bastion
         ];
+      };
+
+      checks.${system}.admin-security = import ./tests/admin-security.nix {
+        pkgs = nixpkgs.legacyPackages.${system};
+        sopsModule = sops-nix.nixosModules.sops;
       };
     };
 }

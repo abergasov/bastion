@@ -8,4 +8,13 @@
   ipv6PrefixLength = 64;
   ipv6Gateway = null;
   expectedEd25519HostKey = null;
+
+  # The following values enable the production secrets and administration
+  # module. Keep this file ignored; it names private local material but never
+  # contains it.
+  adminAuthorizedKey = null;
+  ownerAgeRecipient = null;
+  vpsAgeRecipient = null;
+  vpsAgeIdentityFile = null;
+  sopsSecretsFile = null;
 }
