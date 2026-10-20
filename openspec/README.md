@@ -32,9 +32,35 @@ to its scope; it must not silently turn proposals into requirements.
 - [Agent instructions](../AGENTS.md) govern how work is performed.
 
 Future behavior changes belong in `openspec/changes/` using the configured
-`spec-driven` workflow. There is no implementation change or completed task list
-for this documentation migration. Keep approved requirements in `specs/` and
-update the notes when the owner resolves an open choice.
+`spec-driven` workflow. Keep approved requirements in `specs/` and update the
+notes when the owner resolves an open choice.
+
+## Implementation plan
+
+The following changes plan implementation of the approved baseline. They do not
+authorize implementation or deployment by themselves. Tasks remain incomplete
+until implementation and the relevant checks provide evidence.
+
+| Order | Change | Dependencies |
+| --- | --- | --- |
+| 1 | [NixOS platform and installation](changes/implement-nixos-platform/proposal.md) · [tasks](changes/implement-nixos-platform/tasks.md) | None; provides the foundation |
+| 2 | [Secrets and administration](changes/implement-secrets-and-administration/proposal.md) · [tasks](changes/implement-secrets-and-administration/tasks.md) | 1 |
+| 3 | [VPN connectivity](changes/implement-vpn-connectivity/proposal.md) · [tasks](changes/implement-vpn-connectivity/tasks.md) | 1, 2 |
+| 4 | [Device lifecycle](changes/implement-device-lifecycle/proposal.md) · [tasks](changes/implement-device-lifecycle/tasks.md) | 1, 2, 3 for server integration |
+| 5 | [SSH and boot notifications](changes/implement-ssh-notifications/proposal.md) · [tasks](changes/implement-ssh-notifications/tasks.md) | 1, 2; independent of 3 and 4 |
+| 6 | [Recovery, updates and final verification](changes/implement-recovery-and-updates/proposal.md) · [tasks](changes/implement-recovery-and-updates/tasks.md) | 1–5 for end-to-end verification |
+
+Each change contains a proposal, technical design and task list. `skip_specs: true`
+keeps these implementation-only plans tied to the existing specifications without
+duplicating them as artificial requirement changes.
+
+Development dependencies do not imply that an intermediate host is ready for
+deployment. Initial live installation requires separate authorization, completed
+component work in changes 1–5 and the automated integration gate in change 6.
+Its live readiness checks follow installation and remain required before claiming
+server readiness; a destructive live recovery exercise is optional and separately
+authorized. Component checks belong to their respective changes; the final change
+combines them into recovery and readiness verification.
 
 Validate the specifications with:
 
