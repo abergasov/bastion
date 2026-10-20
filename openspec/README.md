@@ -6,10 +6,11 @@ record of server readiness**. The NixOS platform foundation now provides one hos
 configuration, a local installation target and a focused installer test; its flake
 metadata/check, evaluation and host closure build have passed locally. The secrets
 and administration implementation adds local staging, conditional sops-nix and
-NixOS test definitions; static/evaluation checks passed, while VM runtime checks
-remain unavailable in the current sandbox as recorded in its implementation
-notes. No live VPS, VPN or end-to-end integration checks have run. This does not
-authorize deployment or server deletion.
+NixOS tests. Formatting, evaluation, host closure build, full flake check and
+SOPS/SSH/su/fail2ban IPv4/IPv6 VM checks passed on an isolated test node using
+TCG, as recorded in the [verification notes](../docs/secrets-and-administration.md).
+No Bastion deployment, live VPN or complete cross-component integration checks
+have run. This does not authorize deployment or server deletion.
 
 ## Specifications
 
@@ -49,7 +50,7 @@ until implementation and the relevant checks provide evidence.
 | Order | Change | Dependencies |
 | --- | --- | --- |
 | 1 | [NixOS platform and installation](changes/archive/2026-10-20-implement-nixos-platform/proposal.md) · [tasks](changes/archive/2026-10-20-implement-nixos-platform/tasks.md) — archived, 11/11 complete | None; provides the foundation |
-| 2 | [Secrets and administration](changes/implement-secrets-and-administration/proposal.md) · [tasks](changes/implement-secrets-and-administration/tasks.md) | 1 |
+| 2 | [Secrets and administration](changes/archive/2026-10-20-implement-secrets-and-administration/proposal.md) · [tasks](changes/archive/2026-10-20-implement-secrets-and-administration/tasks.md) — archived, 18/18 complete | 1 |
 | 3 | [VPN connectivity](changes/implement-vpn-connectivity/proposal.md) · [tasks](changes/implement-vpn-connectivity/tasks.md) | 1, 2 |
 | 4 | [Device lifecycle](changes/implement-device-lifecycle/proposal.md) · [tasks](changes/implement-device-lifecycle/tasks.md) | 1, 2, 3 for server integration |
 | 5 | [SSH and boot notifications](changes/implement-ssh-notifications/proposal.md) · [tasks](changes/implement-ssh-notifications/tasks.md) | 1, 2; independent of 3 and 4 |

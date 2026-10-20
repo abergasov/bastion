@@ -18,6 +18,11 @@ while IFS= read -r path; do
   }
 done < <(git ls-files secrets)
 
+if git grep -inE '(^|[^[:alnum:]])(ca|client|enrollment|revocation)([^[:alnum:]]|$)' -- secrets; then
+  printf '%s\n' "owner-only credential state found in VPS SOPS input" >&2
+  exit 1
+fi
+
 rg -q 'age.keyFile = "/var/lib/sops-nix/age/key.txt"' modules/secrets-administration.nix
 rg -q 'admin-password-hash\.neededForUsers = true' modules/secrets-administration.nix
 rg -q 'root-password-hash\.neededForUsers = true' modules/secrets-administration.nix

@@ -35,7 +35,14 @@
       });
     in
     {
-      formatter.${system} = nixpkgs.legacyPackages.${system}.nixfmt;
+      formatter.${system} = nixpkgs.legacyPackages.${system}.writeShellApplication {
+        name = "format-nix";
+        runtimeInputs = with nixpkgs.legacyPackages.${system}; [ findutils nixfmt ];
+        text = ''
+          root="''${PRJ_ROOT:-.}"
+          find -- "$root" -path "$root/.git" -prune -o -type f -name '*.nix' -print0 | xargs -0 -r nixfmt --
+        '';
+      };
 
       packages.${system}.nixos-anywhere = patchedNixosAnywhere;
 

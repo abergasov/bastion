@@ -3,7 +3,10 @@ pkgs.testers.nixosTest {
   name = "bastion-admin-security";
 
   nodes.machine = { lib, ... }: {
-    imports = [ sopsModule ../modules/secrets-administration.nix ];
+    imports = [
+      sopsModule
+      ../modules/secrets-administration.nix
+    ];
     _module.args = {
       hostInput = {
         adminAuthorizedKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBastionSyntheticAdminKey000000000000000000000000 test";
@@ -14,16 +17,29 @@ pkgs.testers.nixosTest {
       };
       sopsFile = "/run/bastion-secrets.yaml";
     };
+    system.switch.enable = true;
     boot.consoleLogLevel = lib.mkForce 3;
-    environment.systemPackages = [ pkgs.age pkgs.expect pkgs.openssh pkgs.openssl pkgs.sops ];
+    environment.systemPackages = [
+      pkgs.age
+      pkgs.expect
+      pkgs.openssh
+      pkgs.openssl
+      pkgs.sops
+    ];
   };
 
   nodes.client = { lib, ... }: {
     boot.consoleLogLevel = lib.mkForce 3;
-    environment.systemPackages = [ pkgs.age pkgs.openssh pkgs.sops ];
+    environment.systemPackages = [
+      pkgs.age
+      pkgs.openssh
+      pkgs.sops
+    ];
   };
 
   testScript = ''
+    import shlex
+
     start_all()
     machine.wait_for_unit("sshd.service")
     machine.wait_for_unit("fail2ban.service")
@@ -44,43 +60,48 @@ pkgs.testers.nixosTest {
     machine.succeed("/run/current-system/bin/switch-to-configuration test")
     machine.succeed("test \"$(stat -c %a /var/lib/sops-nix/age/key.txt)\" = 600")
     machine.succeed("for secret in admin-password-hash root-password-hash; do test \"$(stat -c '%u %a' /run/secrets-for-users/$secret)\" = '0 400'; done")
+    machine.succeed("test $(find -L /run/secrets -type f | wc -l) -eq 2 && test -f /run/secrets/openvpn-server-key && test -f /run/secrets/wireguard-server-key")
     machine.fail("runuser -u admin -- cat /run/secrets-for-users/root-password-hash")
     machine.succeed("install -d -m 700 -o admin -g users /home/admin/.ssh")
     client.succeed("ssh-keygen -q -t ed25519 -N \"\" -f /tmp/admin-key")
     client.succeed("ssh-keygen -q -t ed25519 -N \"\" -f /tmp/rejected-key")
-    import shlex
     admin_key = client.succeed("cat /tmp/admin-key.pub").strip()
     machine.succeed("printf '%s\\n' {} > /home/admin/.ssh/authorized_keys".format(shlex.quote(admin_key)))
     machine.succeed("chown admin:users /home/admin/.ssh/authorized_keys && chmod 600 /home/admin/.ssh/authorized_keys")
     client.succeed("ssh -i /tmp/admin-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
     client.fail("ssh -i /tmp/admin-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@machine true")
     client.fail("ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
-    machine.succeed("runuser -u admin -- expect -c 'spawn su -c \"id -u\"; expect \"Password:\"; send \"synthetic-test-root-password\\r\"; expect \"0\"; expect eof'")
-    machine.succeed("runuser -u admin -- expect -c 'spawn su -c \"id -u\"; expect \"Password:\"; send \"wrong-password\\r\"; expect \"Authentication failure\"; expect eof; exit 0'")
+    machine.succeed("runuser -u admin -- expect -c 'if {[catch { set timeout 5; spawn su -c \"id -u\"; expect \"Password:\" {} eof { error \"unexpected eof\" } timeout { error \"timeout\" }; send \"synthetic-test-root-password\\r\"; expect -re \"(^|\\r\\n)0(\\r\\n|$)\" {} eof { error \"unexpected eof\" } timeout { error \"timeout\" }; set status [wait]; if {[lindex $status 2] != 0 || [lindex $status 3] != 0} { error \"su failed\" } } error]} { puts stderr $error; exit 1 }; exit 0'")
+    machine.succeed("runuser -u admin -- expect -c 'if {[catch { set timeout 5; spawn su -c \"id -u\"; expect \"Password:\" {} eof { error \"unexpected eof\" } timeout { error \"timeout\" }; send \"wrong-password\\r\"; expect \"Authentication failure\" {} eof { error \"unexpected eof\" } timeout { error \"timeout\" }; set status [wait]; if {[lindex $status 2] != 0 || [lindex $status 3] == 0} { error \"su unexpectedly succeeded\" } } error]} { puts stderr $error; exit 1 }; exit 0'")
 
     machine.succeed("fail2ban-client status sshd")
-    machine.succeed("test \"$(fail2ban-client get sshd backend)\" = systemd")
+    machine.succeed("fail2ban-client get sshd journalmatch | grep -F '_SYSTEMD_UNIT=sshd.service'")
     machine.succeed("test \"$(fail2ban-client get sshd findtime)\" = 600")
     machine.succeed("test \"$(fail2ban-client get sshd bantime)\" = 600")
     maxretry = int(machine.succeed("fail2ban-client get sshd maxretry").strip())
     assert maxretry == 3
     client_ipv4 = client.succeed("ip -4 -o addr show dev eth1 | awk '{print $4}' | cut -d/ -f1").strip()
+    client_ipv6_initial = client.succeed("ip -6 -o addr show dev eth1 scope global | awk '$4 ~ /^2001:db8:/ {sub(\"/.*\", \"\", $4); print $4; exit}'").strip()
+    machine.succeed("fail2ban-client set sshd unbanip {}".format(client_ipv4))
+    machine.succeed("fail2ban-client set sshd unbanip {}".format(client_ipv6_initial))
     for _ in range(maxretry):
-      client.fail("ssh -4 -i /tmp/rejected-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
+      client.fail("ssh -4 -i /tmp/rejected-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null rejected-user@machine true")
     machine.wait_until_succeeds("fail2ban-client get sshd banip | grep -Fx {}".format(client_ipv4))
-    client.fail("ssh -i /tmp/admin-key -o ConnectTimeout=2 -o ConnectionAttempts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
+    client.fail("ssh -4 -i /tmp/admin-key -o ConnectTimeout=2 -o ConnectionAttempts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
     machine.succeed("fail2ban-client set sshd unbanip {}".format(client_ipv4))
     machine.succeed("! fail2ban-client get sshd banip | grep -Fqx {}".format(client_ipv4))
-    client.succeed("ssh -i /tmp/admin-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
+    client.succeed("ssh -4 -i /tmp/admin-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@machine true")
 
     machine.succeed("ip -6 addr add fd00::1/64 dev eth1")
     client.succeed("ip -6 addr add fd00::2/64 dev eth1")
+    client_ipv6 = client.succeed("ip -6 -o addr show dev eth1 | awk '$4 ~ /^fd00::2\\// {sub(\"/.*\", \"\", $4); print $4; exit}'").strip()
+    machine.succeed("fail2ban-client set sshd unbanip {}".format(client_ipv6))
     for _ in range(maxretry):
-      client.fail("ssh -6 -i /tmp/rejected-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@fd00::1 true")
-    machine.wait_until_succeeds("fail2ban-client get sshd banip | grep -Fx fd00::2")
+      client.fail("ssh -6 -i /tmp/rejected-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null rejected-user@fd00::1 true")
+    machine.wait_until_succeeds("fail2ban-client get sshd banip | grep -Fx {}".format(client_ipv6))
     client.fail("ssh -6 -i /tmp/admin-key -o ConnectTimeout=2 -o ConnectionAttempts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@fd00::1 true")
-    machine.succeed("fail2ban-client set sshd unbanip fd00::2")
-    machine.succeed("! fail2ban-client get sshd banip | grep -Fqx fd00::2")
+    machine.succeed("fail2ban-client set sshd unbanip {}".format(client_ipv6))
+    machine.succeed("! fail2ban-client get sshd banip | grep -Fqx {}".format(client_ipv6))
     client.succeed("ssh -6 -i /tmp/admin-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@fd00::1 true")
   '';
 }

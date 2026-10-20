@@ -33,6 +33,8 @@ in
 
 
   config = lib.mkIf productionConfigured {
+    users.mutableUsers = false;
+
     assertions = [
       {
         assertion = sopsFile != null || (lib.hasPrefix "secrets/" resolvedHostInput.sopsSecretsFile && !lib.hasInfix ".." resolvedHostInput.sopsSecretsFile);

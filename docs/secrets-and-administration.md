@@ -56,9 +56,18 @@ runtime paths, device management и ssh_notify являются cross-component 
 
 ## Локальная проверка
 
-`make test` (включая static secret scan), `git diff --check`, strict OpenSpec
-validation, VM derivation evaluation и `nix flake check --no-build` завершились
-успешно. Реальный VM build не запускался: portable Nix fallback не сохраняет
-нужную purity, а повтор в strict sandbox остановлен отсутствием kernel namespace
-для private user mount. `nix fmt` также недоступен по этой причине. Поэтому
-runtime VM scenarios SSH, SOPS и fail2ban остаются незавершёнными.
+`make test` (включая static secret scan), `git diff --check` и strict OpenSpec
+validation завершились успешно. На выделенной изолированной test node успешно
+выполнены `nix fmt`, `nix flake check --no-build`, build host closure и полная
+`nix flake check`. Полный NixOS integration test `admin-security` завершился
+успешно под TCG без KVM: owner recipient расшифровал fixture, rejected identity
+получила отказ; sops-nix создал ровно два server-key runtime-файла и protected
+password files с нужными правами; key-only `admin` SSH, отказы root/password и
+correct/incorrect `su` проверены. Штатный fail2ban SSH jail использовал systemd
+journal match и свои pinned defaults; отдельные IPv4 и IPv6 invalid-user
+attempts были забанены, authorised admin key был отклонён во время ban и снова
+допущен после exact unban.
+
+Это изолированная VM-проверка: Bastion не устанавливался и не развёртывался на
+test node, а production secrets, VPN services, issuance, rotation и rollout
+остаются вне этого change.
