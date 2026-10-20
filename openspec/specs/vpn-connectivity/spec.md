@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Define the supported VPN transports, clients and full-tunnel behavior for private
-internet access. These requirements describe a system still to be implemented.
+Define server-side VPN transports, IPv4/IPv6 forwarding, DNS settings and client
+isolation. End-user application selection and device configuration are outside
+Bastion's scope. These requirements describe a system still to be implemented.
 
 ## Requirements
 
@@ -14,114 +15,84 @@ Documentation SHALL NOT describe TCP/443 as HTTPS or claim that either port
 guarantees bypass of traffic filtering, anonymity or absolute security.
 
 #### Scenario: Connect through each protocol
-- **WHEN** a device uses a valid profile for its selected VPN protocol
+- **WHEN** a protocol-compatible test peer uses a valid profile for its selected VPN protocol
 - **THEN** OpenVPN connects to TCP/443 and WireGuard connects to UDP/443
 - **AND** neither connection requires a domain name or an HTTPS service
 
-### Requirement: Pinned OpenVPN server certificate
+### Requirement: OpenVPN profile server fingerprint
 
-OpenVPN client profiles SHALL contain exactly the current server certificate's
-SHA-256 fingerprint using `peer-fingerprint`. Clients SHALL reject a different
-server certificate, even if signed by the same trusted CA. The fingerprint SHALL
-come from the certificate issued on the administrator's computer and be included
-in the locally generated `.ovpn` profile; it SHALL NOT be learned automatically
-from the server during connection. No separate fingerprint file is required.
-Fingerprint enforcement SHALL be verified in the selected client application on
-Android, iOS, Windows, macOS and Linux before readiness is declared. Unsupported
-or ignored `peer-fingerprint` settings SHALL NOT be worked around by removing
-the pin or falling back to CA-only verification.
+Generated OpenVPN profiles SHALL contain exactly the current server certificate's
+SHA-256 fingerprint using `peer-fingerprint`. The fingerprint SHALL come from the
+certificate issued on the administrator's computer and be included in the locally
+generated `.ovpn` profile. No separate fingerprint file is required. Profile
+export SHALL NOT omit the pin or substitute a stale fingerprint for compatibility
+with a particular application. Application support for and enforcement of the pin
+are the user's responsibility, not a Bastion readiness criterion.
 
-#### Scenario: Connect to the pinned server
-- **WHEN** a supported client connects to the current server using a valid device profile
-- **THEN** the server certificate matches the profile's fingerprint and the connection succeeds with all other required checks satisfied
+#### Scenario: Export a profile for the current server
+- **WHEN** an OpenVPN profile is generated
+- **THEN** its `peer-fingerprint` contains only the current locally issued server certificate's SHA-256 fingerprint
+- **AND** the fingerprint is not learned from a remote server during connection
 
-#### Scenario: Reject a different server certificate
-- **WHEN** a server presents a certificate whose SHA-256 fingerprint differs from the profile's pin, including a certificate signed by the same CA
-- **THEN** the client rejects the connection without accepting or automatically learning the new fingerprint
+### Requirement: User-owned applications and device configuration
 
-### Requirement: Supported clients and scale
+Users MAY choose any application compatible with the configured VPN protocol.
+Bastion SHALL NOT mandate applications or certify compatibility across Android,
+iOS, Windows, macOS and Linux. Users are responsible for profile import, device
+routing and DNS behavior, kill switches, local-network access restrictions,
+server identity verification and replacement of old profiles after recreation.
+Bastion SHALL NOT configure or test these behaviors on end-user devices, nor
+claim that server configuration prevents direct internet or DNS bypass on them.
+Server verification MAY use protocol-compatible test peers without creating a
+supported application or OS matrix.
 
-Bastion SHALL support phones, computers and tablets running Android, iOS, Windows,
-macOS and Linux with separate VPN credentials per device. Expected use is 2–3
+#### Scenario: Use a user-selected application
+- **WHEN** a user chooses an application for their device
+- **THEN** the user is responsible for compatibility and correct application of the supplied profile
+- **AND** application selection and device-side protection checks are not Bastion acceptance requirements
+
+### Requirement: Device identities and scale
+
+Bastion SHALL provide separate VPN credentials per device. Expected use is 2–3
 users with 3–4 devices each; Bastion SHALL NOT impose artificial client, device,
 bandwidth or traffic quotas.
 
 #### Scenario: Use several devices
-- **WHEN** a user enrolls multiple supported devices
+- **WHEN** a user enrolls multiple devices
 - **THEN** each device receives its own VPN identity
 - **AND** the expected device count is not enforced as an enrollment quota
 
-### Requirement: Full-tunnel internet and DNS
+### Requirement: Server-side full-tunnel support and DNS settings
 
-Both VPNs SHALL carry all client IPv4 and IPv6 internet traffic, including DNS,
-through the VPN tunnel and the VPS's internet connection. Both address families
-SHALL remain usable through each VPN; disabling IPv6 is not a substitute for
-IPv6 tunneling.
-VPN client DNS configuration SHALL list Cloudflare `1.1.1.1` first as the default
-resolver and Google `8.8.8.8` second as the backup.
-Clients SHALL query the selected public resolver directly through the VPN tunnel
-and the VPS's internet connection. Bastion SHALL NOT deploy a separate DNS service
-or DNS forwarder on the VPS for VPN clients. Both resolver addresses SHALL be
-routed through the VPN. Resolver selection and failover depend on the client OS
-and VPN application; list order alone SHALL NOT be presented as a guarantee that
-Google is used only while Cloudflare is unavailable or that clients immediately
-return to Cloudflare after recovery. Failover SHALL be verified on each supported OS.
-Client routing and kill-switch enforcement SHALL be configured and tested for
-both VPNs on Android, iOS, Windows, macOS and Linux before readiness is declared.
-Client isolation and local-network blocking SHALL be verified as specified below;
-server configuration alone is not proof that clients cannot bypass the VPN.
+Both VPNs SHALL support forwarding IPv4 and IPv6 internet traffic received through
+the tunnel, including DNS, via the VPS's internet connection. Disabling IPv6 is
+not a substitute for IPv6 tunneling. Server-advertised settings and generated
+profiles SHALL provide full-tunnel routing settings for both address families
+where applicable to the protocol, with Cloudflare `1.1.1.1` listed first and
+Google `8.8.8.8` second for DNS. Bastion SHALL NOT deploy a separate DNS service
+or DNS forwarder on the VPS for clients. Both public resolver addresses SHALL be
+reachable through each tunnel. Actual routing, resolver selection, failover and
+leak prevention on the user's device remain the user's responsibility; list
+order SHALL NOT be presented as a guarantee of exclusive Cloudflare use or
+immediate return to Cloudflare after recovery.
 
-#### Scenario: Access the internet with a tunnel established
-- **WHEN** a supported client accesses IPv4 and IPv6 internet destinations or sends DNS requests with either VPN established
-- **THEN** both address families work through the VPN and the VPS, without direct internet bypass
-- **AND** the client queries the selected public resolver directly through the tunnel and the VPS, without a DNS service on the VPS
+#### Scenario: Verify server forwarding through both VPNs
+- **WHEN** a test peer sends IPv4 and IPv6 internet traffic through each VPN
+- **THEN** both address families are forwarded through the VPS's internet connection
+- **AND** having public IPv4/IPv6 addresses alone is not accepted as proof of tunnel forwarding
 
-#### Scenario: Verify dual-stack routing
-- **WHEN** each VPN is checked on a supported operating system with native IPv4 and IPv6 available
-- **THEN** internet access through both address families is verified to exit through the VPS without bypassing the VPN
-- **AND** server public dual-stack addressing alone is not accepted as that verification
+#### Scenario: Verify DNS settings and reachability
+- **WHEN** generated profiles, server-advertised settings and DNS traffic through each VPN are checked
+- **THEN** DNS settings list Cloudflare first and Google second, and test queries can reach each resolver through the tunnel
+- **AND** no DNS service or forwarder for VPN clients runs on the VPS
 
-#### Scenario: Default DNS resolver is unavailable
-- **WHEN** Cloudflare `1.1.1.1` is unreachable through an established VPN tunnel
-- **THEN** the supported client can resolve names using Google `8.8.8.8` through that tunnel
-- **AND** switching delay and resolver selection after Cloudflare recovers are checked and documented for that client
+### Requirement: Server-side client isolation
 
-### Requirement: Client isolation and local-network blocking
-
-Bastion SHALL block IPv4 and IPv6 traffic between VPN clients, both within each
-VPN and between OpenVPN and WireGuard, including devices belonging to the same
-user. Clients SHALL NOT access their local network while the VPN is enabled,
-including during tunnel loss and reconnection. Client configurations SHALL NOT
-enable local-network access exceptions. Traffic strictly necessary to establish
-or restore the underlying network connection and VPN SHALL remain possible;
-this SHALL NOT permit general access to local-network services.
-These restrictions SHALL be configured and verified for both VPNs on Android,
-iOS, Windows, macOS and Linux.
+Bastion SHALL block IPv4 and IPv6 traffic through the VPS between VPN clients,
+both within each VPN and between OpenVPN and WireGuard, including devices
+belonging to the same user. Access to a device's local network outside the tunnel
+is controlled by the user and is outside the server's isolation guarantee.
 
 #### Scenario: Attempt communication between VPN clients
-- **WHEN** a VPN client attempts IPv4 or IPv6 communication with another VPN client in the same VPN or the other VPN
+- **WHEN** a test peer attempts IPv4 or IPv6 communication through the VPS with another VPN peer in the same VPN or the other VPN
 - **THEN** the communication is blocked, including between devices owned by the same user
-
-#### Scenario: Attempt local-network access
-- **WHEN** a supported client attempts to access local-network services over IPv4 or IPv6 while the VPN is enabled, including during tunnel loss and reconnection
-- **THEN** access is blocked
-- **AND** traffic necessary to establish or restore network connectivity and the VPN remains possible without allowing general local-network access
-
-### Requirement: Block internet access during tunnel loss
-
-When either VPN tunnel is lost, the client SHALL block IPv4 and IPv6 internet
-traffic, including DNS, until the tunnel is restored. It SHALL NOT fall back to
-direct internet access while reconnecting. The kill switch SHALL permit the
-traffic necessary to re-establish the VPN connection without permitting general
-internet access outside the tunnel. After restoration, internet traffic SHALL
-resume through the VPN and the VPS.
-
-#### Scenario: Tunnel drops
-- **WHEN** an established OpenVPN or WireGuard tunnel is interrupted on a supported operating system
-- **THEN** IPv4, IPv6 and DNS internet traffic is blocked rather than sent directly through the client's network
-- **AND** the block remains effective throughout reconnection attempts, including a change between client networks
-
-#### Scenario: Tunnel is restored
-- **WHEN** the VPN tunnel is successfully re-established after an interruption
-- **THEN** IPv4 and IPv6 internet access and DNS resolution resume through the VPN and the VPS
-- **AND** no direct internet fallback occurs before restoration

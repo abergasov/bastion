@@ -1,7 +1,7 @@
 # Bastion specifications
 
 These specifications capture the target behavior from `AGENTS.md` and subsequent
-owner decisions as of 2026-10-19. They are a requirements baseline, **not a record of implemented or
+owner decisions as of 2026-10-20. They are a requirements baseline, **not a record of implemented or
 verified functionality**. There are no NixOS configurations, management commands,
 build targets, or integration tests yet. This migration authorizes documentation
 only; it does not authorize implementation, deployment, or server deletion.
@@ -11,7 +11,7 @@ only; it does not authorize implementation, deployment, or server deletion.
 | Capability | Scope |
 | --- | --- |
 | [server-platform](specs/server-platform/spec.md) | Reproducible NixOS host, provider independence, installation |
-| [vpn-connectivity](specs/vpn-connectivity/spec.md) | Protocols, endpoints, clients, full tunnel and DNS |
+| [vpn-connectivity](specs/vpn-connectivity/spec.md) | Server endpoints, forwarding, DNS settings and peer isolation |
 | [server-administration](specs/server-administration/spec.md) | Admin-only key-authenticated SSH, account passwords, su and fail2ban |
 | [device-lifecycle](specs/device-lifecycle/spec.md) | Make interface, credentials, export, revocation and consistency |
 | [ssh-notifications](specs/ssh-notifications/spec.md) | SSH login and boot/reboot Telegram notifications |
@@ -24,8 +24,8 @@ to its scope; it must not silently turn proposals into requirements.
 ## Supporting context
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
-  the unapproved options, including client application selection, notification contents and delivery guarantees,
-  optional additional backups and recovery choices.
+  the unapproved options, including notification contents and remaining
+  platform/network choices.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this
   migration and is not a migration specification.

@@ -25,15 +25,14 @@ NixOS rebuilds SHALL preserve the current identity. A WireGuard server key may b
 retained on ordinary VPS replacement through the recipient replacement procedure
 below; these keys alone SHALL NOT be treated as a backup of CA or membership state.
 
-After recreation, the administrator SHALL transfer replacement OpenVPN profiles
-from their trusted computer to each device. Each profile SHALL pin only the new
-certificate's SHA-256 fingerprint using `peer-fingerprint`. Old profiles SHALL be
-removed or disabled on the devices, including automatic connection settings, and
-existing sessions SHALL be disconnected before connecting with the new profile.
-Recreating the VPS or revoking its certificate locally SHALL NOT be described as
-automatically updating client trust: an unchanged profile still trusts its old
-fingerprint. Recovery for a device SHALL require verifying that its new profile
-connects to the replacement server and rejects the old server certificate.
+After recreation, Bastion SHALL make replacement OpenVPN profiles available from
+the administrator's trusted computer. Each generated profile SHALL pin only the
+new certificate's SHA-256 fingerprint using `peer-fingerprint`. Importing the
+replacement profile, removing or disabling old profiles and automatic connection
+entries, disconnecting old sessions and verifying server identity in the chosen
+application are the user's responsibility. Recreating the VPS or revoking its
+certificate locally SHALL NOT be described as automatically updating client
+trust. Server readiness SHALL NOT require checks on each user's device.
 Recreation SHALL preserve
 the revocation invariant in
 [device-lifecycle](../device-lifecycle/spec.md).
@@ -49,7 +48,7 @@ the revocation invariant in
 - **WHEN** a VPS is recreated, whether after ordinary loss or compromise
 - **THEN** a fresh OpenVPN server key and certificate are generated locally and the new certificate has a different SHA-256 fingerprint
 - **AND** replacement device profiles contain only the new fingerprint
-- **AND** after old profiles are removed or disabled and sessions disconnected, each updated device connects to the replacement and rejects the old certificate, even if the CA is unchanged
+- **AND** profile replacement and server identity checks in the chosen application are documented as user responsibilities
 
 #### Scenario: Rebuild the existing server
 - **WHEN** the existing VPS reboots or its NixOS configuration is rebuilt without server recreation
@@ -61,8 +60,10 @@ Local CA, client keys and enrollment/revocation records SHALL remain on the
 administrator's computer across VPS lifecycle operations. Deployed public access
 state and necessary VPN server secrets SHALL persist across ordinary reboots and
 NixOS rebuilds. Local credential state SHALL use the owner-only age-encrypted
-repository storage defined below. Additional backups are optional; recovery may
-use fresh issuance if that state and its usable encrypted copies are lost.
+repository storage defined below. The encrypted repository hosted on GitHub is
+the selected remote copy; no additional credential backup system is required.
+Recovery may use fresh issuance if that state and its usable encrypted copies
+are lost. Only committed and pushed state is available from GitHub.
 Server VPN keys SHALL use the encrypted repository storage defined below. If credential
 backup/restore is supported, backups SHALL be encrypted and restores SHALL enforce
 current revocations before exposing VPN listeners. Git and NixOS system generations
@@ -100,9 +101,12 @@ the VPS SHALL be able to decrypt this state. Server VPN keys SHALL continue to
 use the separate SOPS/sops-nix scheme below.
 
 The owner's private age key SHALL be stored in KeePassXC, outside the project
-repository and off the VPS. Its protected backup SHALL remain recoverable
-independently of the administrator's computer; it SHALL NOT depend solely on
-files encrypted with that same age key. Decrypted working files SHALL remain
+repository and off the VPS. No separate backup of this key SHALL be created as
+part of Bastion. The owner accepts that losing the key makes owner-only encrypted
+GitHub copies unusable if no decrypted local state remains. Recovery in that case
+SHALL generate a new owner age identity and fresh VPN credentials, explicitly
+re-enroll intended devices and replace their profiles; old credentials SHALL NOT
+regain access. Decrypted working files SHALL remain
 outside the repository with restrictive permissions and SHALL NOT enter logs,
 command arguments or Nix build artifacts.
 
@@ -130,12 +134,18 @@ enforce the revocation requirements in
 - **THEN** decryption is verified before the state is used
 - **AND** an older repository revision does not silently reauthorize revoked devices
 
+#### Scenario: Lose the owner key and local credential state
+- **WHEN** the owner's age key and decrypted local credential state are lost while encrypted copies remain on GitHub
+- **THEN** recovery does not claim that GitHub can restore the owner-only encrypted state
+- **AND** a new owner age identity and fresh VPN credentials are generated, with explicit device enrollment and replacement profiles
+- **AND** old credentials remain denied
+
 ### Requirement: Encrypted server VPN keys in Git
 
 The OpenVPN server private key and WireGuard server private key SHALL be stored
 in Git only as SOPS ciphertext encrypted with age for two independent recipients:
 the owner and the VPS. Each recipient SHALL be able to decrypt independently.
-The owner's private age key and its protected backup SHALL remain off the VPS
+The owner's private age key SHALL remain off the VPS
 and outside Git. The VPS SHALL hold its own private age key outside Git and
 `/nix/store`; initial provisioning SHALL use authenticated access with host-key
 verification. Public age recipients may be committed to Git.
@@ -165,7 +175,7 @@ identity available on the VPS.
 - **AND** the owner remains a recipient and the new VPS can decrypt without the old VPS private age key
 - **AND** the newly generated OpenVPN server key is saved as SOPS ciphertext for the owner and replacement VPS before deployment
 - **AND** the WireGuard server key may be retained if it was not exposed
-- **AND** OpenVPN profiles are replaced and verified as required above; changing the age recipient alone is insufficient
+- **AND** replacement OpenVPN profiles are generated with the new fingerprint for users to install; changing the age recipient alone is insufficient
 - **AND** missing CA or membership state still requires fresh issuance and enrollment
 
 ### Requirement: Recovery after host compromise
@@ -180,8 +190,9 @@ root-compromised server.
 
 Recovery from a confirmed full host compromise SHALL recreate the VPS, replace
 its age identity and rotate exposed server VPN keys. The exposed OpenVPN server
-certificate SHALL be revoked locally, and client profiles SHALL be replaced with
-profiles pinning only the new certificate as required above. Local CA and client keys
+certificate SHALL be revoked locally, and replacement client profiles SHALL be generated
+pinning only the new certificate as required above. Users are responsible for
+installing them and updating trust in their applications. Local CA and client keys
 need replacement if exposed; VPS compromise alone does not imply their exposure.
 Other secrets accessible to the compromised host SHALL also be rotated.
 Removing an age recipient SHALL NOT be
@@ -190,7 +201,7 @@ treated as revoking access to historical ciphertext or already obtained secrets.
 #### Scenario: Replace a compromised VPS
 - **WHEN** recovery follows a confirmed full host compromise
 - **THEN** the replacement uses a new age identity and fresh server VPN keys
-- **AND** recovery updates client trust so the compromised server identity is no longer accepted
+- **AND** recovery supplies profiles pinning only the new server certificate and identifies updating application trust as the user's responsibility
 - **AND** replacing recipients alone is not reported as sufficient recovery
 
 ### Requirement: Build and integration verification
@@ -212,23 +223,28 @@ export, recipient separation, and partial failure between local and server updat
 - **AND** revoked devices remain denied across the tested lifecycle operations
 - **AND** unrun checks and known exclusions are explicitly reported
 
-### Requirement: Real-client and live-operation verification
+### Requirement: Server connectivity and live-operation verification
 
-Readiness SHALL require real-client IPv4/IPv6 routing and DNS checks for both VPNs
-on every supported operating system, including kill-switch enforcement during
-tunnel loss, reconnection and client network changes, and restored access through
-the VPS after reconnection. It SHALL also require a fresh SSH login, log rotation,
-service restart and actual reboot
-notification checks. On each supported OS, OpenVPN checks SHALL verify acceptance
-of the current pinned server certificate and rejection of the old certificate
-after recreation, including when both certificates share the same CA.
-A successful build SHALL NOT be treated as proof of remote
-reachability or client leak prevention.
+Readiness SHALL require checks of both VPN endpoints using protocol-compatible
+test peers, IPv4/IPv6 forwarding through the VPS, public DNS reachability through
+each tunnel and server-side peer isolation. It SHALL also require a fresh SSH
+login, log rotation, service restart and actual reboot notification checks.
+OpenVPN profile checks SHALL verify that exported fingerprints match the current
+locally issued server certificate and are replaced after recreation. End-user
+application selection, per-OS compatibility, kill switches, local-network
+blocking and device-side routing, DNS failover and certificate verification are
+outside Bastion acceptance criteria. A successful build SHALL NOT be treated as
+proof of remote reachability or client leak prevention.
 
-#### Scenario: Build passes but client checks are absent
-- **WHEN** the system builds successfully without the required client and live-operation checks
+#### Scenario: Build passes but server connectivity checks are absent
+- **WHEN** the system builds successfully without the required server connectivity and live-operation checks
 - **THEN** readiness is not declared
-- **AND** the remaining checks are identified
+- **AND** the remaining server checks are identified
+
+#### Scenario: End-user application checks are absent
+- **WHEN** all required server, profile and lifecycle checks pass without testing end-user applications on each OS
+- **THEN** the absent device checks do not block server readiness
+- **AND** no claim is made that end-user devices prevent leaks or enforce certificate pinning
 
 ### Requirement: Safe rollout within authorized scope
 
