@@ -19,6 +19,45 @@ guarantees bypass of traffic filtering, anonymity or absolute security.
 - **THEN** OpenVPN connects to TCP/443 and WireGuard connects to UDP/443
 - **AND** neither connection requires a domain name or an HTTPS service
 
+### Requirement: Inbound services and unrestricted outbound traffic
+
+Bastion SHALL permit inbound connections to SSH and the configured VPN endpoints
+only, rejecting connections to other listening services on both IPv4 and IPv6.
+The firewall SHALL allow established/related return traffic and control traffic
+required for correct IPv4/IPv6 operation.
+
+Bastion SHALL NOT impose outbound destination or port restrictions on traffic
+originating from the VPS or forwarded from authenticated VPN clients. It SHALL
+NOT add a special denylist for provider private or metadata networks. The
+server-side client isolation requirement below SHALL still apply within and
+across both VPNs. VPN address pools and routing details SHALL be selected during
+implementation to satisfy forwarding and isolation requirements.
+
+#### Scenario: Restrict inbound services
+- **WHEN** an external peer attempts new IPv4 or IPv6 connections to the VPS
+- **THEN** only SSH, OpenVPN TCP/443 and WireGuard UDP/443 are permitted as inbound services, subject to authentication and fail2ban
+- **AND** required network control traffic and established/related replies remain permitted
+
+#### Scenario: Allow outbound traffic while preserving peer isolation
+- **WHEN** the VPS or an authenticated VPN client initiates outbound traffic
+- **THEN** Bastion applies no outbound destination or port restriction
+- **AND** traffic between VPN clients remains blocked as required below
+
+### Requirement: OpenVPN performance priority
+
+OpenVPN configuration SHALL prioritize maximum practical throughput on the target
+VPS resource class while preserving encryption, authentication, server fingerprint
+pinning, revocation and client isolation. The agreed TCP/443 transport SHALL
+remain in use. Cipher selection, compression policy, control-channel protection
+(including whether to use tls-crypt-v2) and supported acceleration SHALL be
+implementation choices informed by current upstream documentation and measurement
+on the target VPS, not additional owner configuration decisions.
+
+#### Scenario: Select and verify OpenVPN parameters
+- **WHEN** implementation selects OpenVPN performance settings
+- **THEN** it records the selected settings, measures throughput and CPU use on the target resource class, and reports any unverified limits
+- **AND** performance tuning preserves the required security and connectivity behavior
+
 ### Requirement: OpenVPN profile server fingerprint
 
 Generated OpenVPN profiles SHALL contain exactly the current server certificate's

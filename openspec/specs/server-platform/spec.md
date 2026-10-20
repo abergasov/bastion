@@ -14,10 +14,17 @@ running OpenVPN, WireGuard, fail2ban and the owner's ssh_notify integration.
 Migration of existing VPN credentials and backward compatibility with the previous
 server are not required.
 
+Bastion SHALL select the latest stable NixOS release and its corresponding
+nixpkgs branch when preparing the initial installation. Implementation SHALL
+verify the current stable release against official sources and pin the selected
+revision in `flake.lock`. Later release upgrades SHALL follow the manual update
+procedure below; this policy does not enable automatic upgrades.
+
 #### Scenario: Configure a new server
 - **WHEN** the administrator prepares a new host
 - **THEN** its services and persistent networking are described by NixOS configuration
 - **AND** installation does not depend on importing credentials from the previous server
+- **AND** the configuration uses the latest stable NixOS release available when preparing installation, with its nixpkgs revision locked
 
 ### Requirement: Small VPS resource target
 
@@ -52,6 +59,10 @@ The server SHALL have public IPv4 and IPv6 addresses and use IP addresses as
 connection endpoints without requiring a domain. Installation SHALL be automated
 over SSH using `nixos-anywhere` with `disko` for declarative disk partitioning and
 formatting. Concrete public addresses SHALL be supplied for each host.
+The owner SHALL create the VPS manually in the provider console with IPv4/IPv6
+and the owner's public SSH key, enter the host addresses in local configuration,
+and initiate installation through a local Make target. The target name is an
+implementation detail.
 The owner's existing Ed25519 public key is already registered for new VPS creation
 and SHALL provide initial SSH access for the owner or installation script; its
 private key SHALL remain off the VPS. Initial access to the provider's source OS
@@ -66,7 +77,7 @@ specified in [vpn-connectivity](../vpn-connectivity/spec.md); public IPv6
 addressing alone does not satisfy that requirement.
 
 #### Scenario: Install an IP-only host
-- **WHEN** the administrator starts an authorized installation on a prepared host
+- **WHEN** the administrator creates the VPS, configures its addresses locally and starts an authorized installation through the local Make target
 - **THEN** `nixos-anywhere` installs NixOS over SSH with the `disko` disk configuration
 - **AND** initial access uses the owner's existing Ed25519 key and verified installation privileges
 - **AND** the installed host permits SSH only as `admin` using the authorized key
@@ -94,3 +105,17 @@ Privileged activation SHALL follow the `admin` SSH login and password-authentica
 #### Scenario: Apply a critical security fix
 - **WHEN** a critical security fix requires an update before the next weekly window
 - **THEN** the administrator performs an out-of-schedule manual update with the same build and connectivity checks
+
+### Requirement: Default logs with automatic retention
+
+Bastion SHALL use the default operational logs and logging levels of the selected
+NixOS services. It SHALL retain logs for 30 days and automatically remove older
+logs using native logging and rotation facilities. The retention policy SHALL
+cover both the system journal and any service log files used by the deployment,
+including the authentication log consumed by ssh_notify if a text log is used.
+Secret-exclusion requirements SHALL continue to apply.
+
+#### Scenario: Remove expired logs automatically
+- **WHEN** operational logs pass the 30-day retention period
+- **THEN** automatic retention cleanup removes expired logs without a manual command
+- **AND** rotation and cleanup preserve ongoing logging and SSH notification processing

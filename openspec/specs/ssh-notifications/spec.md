@@ -59,7 +59,9 @@ and recovery SHALL use that encrypted configuration as their source. sops-nix
 SHALL decrypt the complete configuration into a protected runtime file under
 `/run/secrets` for the service to read; plaintext SHALL NOT enter Git, Nix
 expressions, `/nix/store`, logs or command arguments.
-Notification contents remain open. Notifications SHALL NOT be presented as a
+No redesign of the existing SSH login notification contents is required.
+Boot/reboot notifications SHALL distinguish actual system boots from service
+restarts as specified above. Notifications SHALL NOT be presented as a
 complete audit trail: delivery uses the bounded retry policy below.
 
 #### Scenario: Build and configure the integration

@@ -24,8 +24,8 @@ to its scope; it must not silently turn proposals into requirements.
 ## Supporting context
 
 - [Design proposals and open questions](notes/design-and-open-questions.md) retain
-  the unapproved options, including notification contents and remaining
-  platform/network choices.
+  decision history and remaining implementation choices. Notification wording
+  and per-host installation inputs do not require a separate design decision.
 - [Historical research](notes/research.md) retains the Ansible observations,
   inspected upstream commits and source links. It was not revalidated during this
   migration and is not a migration specification.
