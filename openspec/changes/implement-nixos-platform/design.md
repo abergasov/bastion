@@ -128,3 +128,11 @@ installer safety и log retention. Он предоставляет foundation ch
 4. `implement-recovery-and-updates` определяет безопасное обновление и
    rollback/recreation evidence; при потере административного доступа baseline
    использует recreation, а не неописанный rollback диска.
+
+## Upstream reference record — 2026-10-20
+
+Выбранные refs сверены с upstream: [ветка nixpkgs
+`nixos-26.05`](https://github.com/NixOS/nixpkgs/tree/nixos-26.05),
+[disko `v1.13.0`](https://github.com/nix-community/disko/tree/v1.13.0) и
+[nixos-anywhere `1.13.0`](https://github.com/nix-community/nixos-anywhere/tree/1.13.0).
+`flake.lock` фиксирует разрешённые revisions этих inputs.

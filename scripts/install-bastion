@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf '%s\n' "install-bastion: $*" >&2
+  exit 1
+}
+
+root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root_dir"
+host_input=${HOST_INPUT:-hosts/bastion/host-input.nix}
+
+[ -f "$host_input" ] || die "missing local host input: $host_input"
+
+read_input() {
+  nix eval --raw --file "$host_input" --apply "input: input.$1"
+}
+
+source_user=$(read_input sourceUser)
+target_host=$(read_input ipv4Address)
+expected_host_key=$(read_input expectedEd25519HostKey)
+
+[ -n "$source_user" ] && [ "$source_user" != "null" ] || die "sourceUser must be set"
+[ -n "$target_host" ] && [ "$target_host" != "null" ] || die "ipv4Address must be set"
+[[ "$expected_host_key" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+$ ]] \
+  || die "expectedEd25519HostKey must be an ssh-ed25519 public host key"
+
+known_hosts=$(mktemp)
+install_dir=$(mktemp -d)
+trap 'rm -f "$known_hosts"; rm -rf "$install_dir"' EXIT
+chmod 600 "$known_hosts"
+printf '%s %s\n' "$target_host" "$expected_host_key" > "$known_hosts"
+
+ssh_options=(
+  -o BatchMode=yes
+  -o "UserKnownHostsFile=$known_hosts"
+  -o GlobalKnownHostsFile=/dev/null
+  -o StrictHostKeyChecking=yes
+)
+
+ssh "${ssh_options[@]}" "$source_user@$target_host" true
+ssh "${ssh_options[@]}" "$source_user@$target_host" 'id -u | grep -qx 0 || sudo -n true' \
+  || die "source OS must be root or allow passwordless sudo"
+
+cp -R flake.nix flake.lock modules hosts patches "$install_dir"
+cp "$host_input" "$install_dir/hosts/bastion/host-input.nix"
+cd "$install_dir"
+
+nix run .#nixos-anywhere -- \
+  --flake .#bastion \
+  --target-host "$source_user@$target_host" \
+  --ssh-option "BatchMode=yes" \
+  --ssh-option "UserKnownHostsFile=$known_hosts" \
+  --ssh-option "GlobalKnownHostsFile=/dev/null" \
+  --ssh-option "StrictHostKeyChecking=yes"

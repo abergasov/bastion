@@ -1,10 +1,12 @@
 # Bastion specifications
 
 These specifications capture the target behavior from `AGENTS.md` and subsequent
-owner decisions as of 2026-10-20. They are a requirements baseline, **not a record of implemented or
-verified functionality**. There are no NixOS configurations, management commands,
-build targets, or integration tests yet. This migration authorizes documentation
-only; it does not authorize implementation, deployment, or server deletion.
+owner decisions as of 2026-10-20. They remain a requirements baseline, **not a
+record of server readiness**. The NixOS platform foundation now provides one host
+configuration, a local installation target and a focused installer test; its flake
+metadata/check, evaluation and host closure build have passed locally. No VM,
+live VPS, VPN, SSH-policy or end-to-end integration checks have run. This does not
+authorize deployment or server deletion.
 
 ## Specifications
 
@@ -56,7 +58,7 @@ duplicating them as artificial requirement changes.
 
 Development dependencies do not imply that an intermediate host is ready for
 deployment. Initial live installation requires separate authorization, completed
-component work in changes 1–5 and the automated integration gate in change 6.
+component work in changes 2–5 and the automated integration gate in change 6.
 Its live readiness checks follow installation and remain required before claiming
 server readiness; a destructive live recovery exercise is optional and separately
 authorized. Component checks belong to their respective changes; the final change

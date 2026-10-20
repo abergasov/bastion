@@ -1,0 +1,11 @@
+{
+  # Copy this file to host-input.nix and fill only public per-host values.
+  sourceUser = "root";
+  ipv4Address = null;
+  ipv4PrefixLength = 32;
+  ipv4Gateway = null;
+  ipv6Address = null;
+  ipv6PrefixLength = 64;
+  ipv6Gateway = null;
+  expectedEd25519HostKey = null;
+}

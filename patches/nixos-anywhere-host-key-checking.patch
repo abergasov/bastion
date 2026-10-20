@@ -1,0 +1,12 @@
+diff --git a/src/nixos-anywhere.sh b/src/nixos-anywhere.sh
+index 89e5257..d5f3fdb 100755
+--- a/src/nixos-anywhere.sh
++++ b/src/nixos-anywhere.sh
+@@ -66,7 +66,7 @@ declare -A diskEncryptionKeys=()
+ declare -A extraFilesOwnership=()
+ declare -a nixCopyOptions=()
+-declare -a sshArgs=("-o" "IdentitiesOnly=yes" "-i" "$tempDir/nixos-anywhere" "-o" "UserKnownHostsFile=/dev/null" "-o" "StrictHostKeyChecking=no")
++declare -a sshArgs=("-o" "IdentitiesOnly=yes" "-i" "$tempDir/nixos-anywhere")
+ 
+ breakpoint() {
+   (
