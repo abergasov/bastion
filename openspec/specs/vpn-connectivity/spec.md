@@ -125,6 +125,32 @@ immediate return to Cloudflare after recovery.
 - **THEN** DNS settings list Cloudflare first and Google second, and test queries can reach each resolver through the tunnel
 - **AND** no DNS service or forwarder for VPN clients runs on the VPS
 
+### Requirement: Prefer IPv6 for outbound connections
+
+IPv6 SHALL be the preferred outbound address family when the destination and
+path support it. IPv4 SHALL remain available for IPv4-only destinations and
+fallback when IPv6 cannot establish a connection. Bastion SHALL preserve this
+preference wherever its configuration controls destination address selection;
+it SHALL NOT enforce preference by blocking or deliberately delaying IPv4.
+
+For forwarded VPN traffic, destination address selection belongs to the client
+OS or application. Bastion SHALL provide working IPv6 egress through the VPS
+and retain IPv4 forwarding in both VPNs. Documentation SHALL explain that VPS
+address-selection settings and the VPN endpoint's address family do not force
+clients to choose IPv6. Client preference and connection racing (such as Happy
+Eyeballs) remain user-owned behavior, not a guarantee that every dual-stack
+connection uses IPv6. No reduction in CAPTCHA frequency SHALL be guaranteed.
+
+#### Scenario: Prefer IPv6 through each VPN
+- **WHEN** a controlled test peer with IPv6 preference connects through each VPN to a dual-stack test destination with working IPv6
+- **THEN** its selected IPv6 connection exits through the VPS's IPv6 connectivity
+- **AND** the result is not presented as proof that all end-user applications select IPv6
+
+#### Scenario: Retain IPv4 fallback through each VPN
+- **WHEN** a controlled test peer connects through each VPN to an IPv4-only destination or selects IPv4 after an IPv6 connection failure
+- **THEN** its IPv4 connection succeeds through the VPS
+- **AND** IPv6 preference does not block IPv4 forwarding
+
 ### Requirement: Server-side client isolation
 
 Bastion SHALL block IPv4 and IPv6 traffic through the VPS between VPN clients,

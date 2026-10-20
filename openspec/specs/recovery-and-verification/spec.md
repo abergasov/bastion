@@ -226,8 +226,9 @@ export, recipient separation, and partial failure between local and server updat
 ### Requirement: Server connectivity and live-operation verification
 
 Readiness SHALL require checks of both VPN endpoints using protocol-compatible
-test peers, IPv4/IPv6 forwarding through the VPS, public DNS reachability through
-each tunnel and server-side peer isolation. It SHALL also require a fresh SSH
+test peers, IPv4/IPv6 forwarding through the VPS, IPv6 preference and IPv4 fallback
+with controlled test peers as specified in [vpn-connectivity](../vpn-connectivity/spec.md),
+public DNS reachability through each tunnel and server-side peer isolation. It SHALL also require a fresh SSH
 login, log rotation, service restart and actual reboot notification checks.
 OpenVPN profile checks SHALL verify that exported fingerprints match the current
 locally issued server certificate and are replaced after recreation. End-user
