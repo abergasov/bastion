@@ -3,7 +3,8 @@
 ## Purpose
 
 Define recovery, secret protection and evidence required before declaring the VPN
-server ready. No Nix evaluation, build or VM tests have been run for this baseline.
+server ready. Ubuntu/Ansible provisioning and integration checks have not run;
+historical NixOS results do not verify this baseline.
 
 ## Requirements
 
@@ -21,7 +22,7 @@ and replacement client profiles using the recreated server's endpoint. Every
 initial server creation and VPS recreation SHALL use a new OpenVPN server private
 key and certificate generated on the administrator's computer. Recreation SHALL
 NOT restore the previous OpenVPN server key or certificate. Routine reboots and
-NixOS rebuilds SHALL preserve the current identity. A WireGuard server key may be
+Ansible configuration reruns SHALL preserve the current identity. A WireGuard server key may be
 retained on ordinary VPS replacement through the recipient replacement procedure
 below; these keys alone SHALL NOT be treated as a backup of CA or membership state.
 
@@ -50,8 +51,8 @@ the revocation invariant in
 - **AND** replacement device profiles contain only the new fingerprint
 - **AND** profile replacement and server identity checks in the chosen application are documented as user responsibilities
 
-#### Scenario: Rebuild the existing server
-- **WHEN** the existing VPS reboots or its NixOS configuration is rebuilt without server recreation
+#### Scenario: Reapply configuration to the existing server
+- **WHEN** the existing VPS reboots or its Ansible configuration is reapplied without server recreation
 - **THEN** its OpenVPN key, certificate and fingerprint remain unchanged and existing profiles remain usable
 
 ### Requirement: Persistent credential state and protected secrets
@@ -59,35 +60,49 @@ the revocation invariant in
 Local CA, client keys and enrollment/revocation records SHALL remain on the
 administrator's computer across VPS lifecycle operations. Deployed public access
 state and necessary VPN server secrets SHALL persist across ordinary reboots and
-NixOS rebuilds. Local credential state SHALL use the owner-only age-encrypted
+Ansible configuration reruns. Local credential state SHALL use the owner-only age-encrypted
 repository storage defined below. The encrypted repository hosted on GitHub is
 the selected remote copy; no additional credential backup system is required.
 Recovery may use fresh issuance if that state and its usable encrypted copies
 are lost. Only committed and pushed state is available from GitHub.
 Server VPN keys SHALL use the encrypted repository storage defined below. If credential
 backup/restore is supported, backups SHALL be encrypted and restores SHALL enforce
-current revocations before exposing VPN listeners. Git and NixOS system generations
+current revocations before exposing VPN listeners. Git and configuration/package revisions
 alone SHALL NOT count as a backup of runtime state. Real passwords, seeds, tokens,
 private keys and client profiles SHALL NOT be exposed in Git, documentation, logs
-or command arguments. Decrypted secrets SHALL NOT be interpolated into Nix
-expressions or derivations. The predefined account-password material and the
+or command arguments. Decrypted secrets SHALL NOT be stored in tracked Ansible inventory, playbooks,
+templates, fact caches or task results. Secret-handling tasks SHALL suppress
+secret output and diffs, including during failures and check mode. The predefined account-password material and the
 complete ssh_notify configuration, including Telegram credentials, SHALL use
 SOPS/age-encrypted Git storage with independent owner and VPS recipients, following
 the same recipient protection and replacement procedure as server VPN keys.
-sops-nix SHALL supply protected runtime files for provisioning and service use;
+The Ansible-managed SOPS integration SHALL supply protected runtime files for provisioning and service use;
 initial deployment and recovery SHALL use the encrypted repository state.
 Credentials exposed during a host compromise SHALL be rotated before reuse.
 
+The owner authorizes reuse of needed secrets from the read-only local Ansible
+project. Import SHALL decrypt only in protected local working storage outside
+the repository and save required values in the agreed SOPS/age storage before
+deployment. Vault passwords, seeds, unrelated secrets and administrator SSH
+private keys SHALL NOT be copied to the VPS or committed as plaintext. Permission
+to reuse secrets does not override fresh OpenVPN server identity requirements.
+
 #### Scenario: Retain state on the existing server
-- **WHEN** the server reboots or its NixOS configuration is rebuilt
+- **WHEN** the server reboots or its Ansible configuration is reapplied
 - **THEN** current VPN credentials and revocations remain effective
+
+#### Scenario: Import approved source secrets
+- **WHEN** implementation reuses needed secrets from `/home/alejandro/go/src/ansible`
+- **THEN** the source is unchanged and only required values are transferred into the agreed encrypted storage
+- **AND** decryption credentials and plaintext do not appear in Git, output, diffs, fact caches or command arguments
+- **AND** the initial OpenVPN server identity is still generated freshly on the administrator's computer
 
 #### Scenario: Restore an optional credential backup
 - **WHEN** a supported credential restore procedure is tested
 - **THEN** the restored server enforces current revocations before exposing VPN listeners
 
 #### Scenario: Inspect secret exposure
-- **WHEN** generated files, permissions, logs and Nix build artifacts are checked
+- **WHEN** generated files, permissions, logs and automation artifacts are checked
 - **THEN** plaintext secret material is absent from public artifacts and command arguments
 - **AND** secret files have restrictive access permissions
 
@@ -98,7 +113,7 @@ authoritative device enrollment/revocation records SHALL be retained locally
 and stored in Git only as age-encrypted files. Encryption SHALL use the owner's
 public age recipient; neither the VPS recipient nor any identity available on
 the VPS SHALL be able to decrypt this state. Server VPN keys SHALL continue to
-use the separate SOPS/sops-nix scheme below.
+use the separate SOPS/age scheme below.
 
 The owner's private age key SHALL be stored in KeePassXC, outside the project
 repository and off the VPS. No separate backup of this key SHALL be created as
@@ -108,7 +123,7 @@ SHALL generate a new owner age identity and fresh VPN credentials, explicitly
 re-enroll intended devices and replace their profiles; old credentials SHALL NOT
 regain access. Decrypted working files SHALL remain
 outside the repository with restrictive permissions and SHALL NOT enter logs,
-command arguments or Nix build artifacts.
+command arguments or automation artifacts.
 
 Management operations SHALL preserve updated local credential state in encrypted
 form before reporting success. Committing and pushing ciphertext SHALL NOT be
@@ -147,12 +162,15 @@ in Git only as SOPS ciphertext encrypted with age for two independent recipients
 the owner and the VPS. Each recipient SHALL be able to decrypt independently.
 The owner's private age key SHALL remain off the VPS
 and outside Git. The VPS SHALL hold its own private age key outside Git and
-`/nix/store`; initial provisioning SHALL use authenticated access with host-key
+public automation artifacts; initial provisioning SHALL use authenticated access with host-key
 verification. Public age recipients may be committed to Git.
 
-sops-nix SHALL decrypt the VPN keys on the target host at activation into protected
-runtime files under `/run/secrets`, with access limited to root and the services
-that need them. Plaintext SHALL NOT enter Nix evaluation or build artifacts.
+Ansible SHALL configure SOPS decryption on the target host before dependent
+services start, including after every boot. Decrypted keys SHALL be protected
+runtime files under `/run/secrets`, accessible only to root and the services that
+need them. Decryption failure SHALL prevent dependent services from starting
+with missing or stale secret files. Plaintext SHALL NOT enter public automation
+artifacts, logs or diffs.
 CA private keys, client private keys and authoritative enrollment/revocation
 records SHALL remain on the administrator's computer. The VPS SHALL receive only
 their public deployment data. Any encrypted copy of CA or client private keys
@@ -161,8 +179,8 @@ identity available on the VPS.
 
 #### Scenario: Deploy encrypted server keys
 - **WHEN** the server activates its configuration with its private age key available
-- **THEN** sops-nix makes the VPN keys available in protected runtime files
-- **AND** Git and Nix build artifacts contain only encrypted copies of those keys
+- **THEN** the Ansible-managed SOPS integration makes the VPN keys available in protected runtime files
+- **AND** Git and automation artifacts contain only encrypted copies of those keys
 
 #### Scenario: Inspect secret separation
 - **WHEN** server files and all SOPS secrets decryptable by the VPS are inspected
@@ -204,22 +222,24 @@ treated as revoking access to historical ciphertext or already obtained secrets.
 - **AND** recovery supplies profiles pinning only the new server certificate and identifies updating application trust as the user's responsibility
 - **AND** replacing recipients alone is not reported as sufficient recovery
 
-### Requirement: Build and integration verification
+### Requirement: Automation and integration verification
 
 Once implemented, Bastion SHALL run relevant formatting/static checks,
-`nix flake check` and a build of the selected host's system closure. Focused NixOS
-integration tests SHALL cover both tunnels, permitted and blocked forwarding,
+`ansible-playbook --syntax-check`, `ansible-lint` and isolated Ubuntu provisioning
+tests. Tests SHALL verify initial application and idempotent reapplication with
+unchanged inputs. Check mode alone SHALL NOT count as integration evidence.
+Focused Ubuntu VM integration tests SHALL cover both tunnels, permitted and blocked forwarding,
 public key-only SSH restricted to `admin`, rejection of direct root SSH login,
 initial `admin`/`root` password setup, switching from `admin` to `root` through
 `su` with the root password, fail2ban matching and ban/unban on IPv4/IPv6, device add/revoke
-across reboot/rebuild, secret permissions and notifications using a local mock
-endpoint. Recreation and supported rollback/restore procedures SHALL be tested,
+across reboot, package updates and Ansible reapplication, secret permissions and notifications using a local mock
+endpoint. Recreation and supported configuration restore procedures SHALL be tested,
 including missing/expired CRLs, active-client revocation, local-only issuance and
 export, recipient separation, and partial failure between local and server updates.
 
 #### Scenario: Validate an implementation
 - **WHEN** an implementation is submitted for readiness review
-- **THEN** build, static and integration results are reported for the affected behavior
+- **THEN** syntax, lint, idempotence and integration results are reported for the affected behavior
 - **AND** revoked devices remain denied across the tested lifecycle operations
 - **AND** unrun checks and known exclusions are explicitly reported
 
@@ -234,11 +254,11 @@ OpenVPN profile checks SHALL verify that exported fingerprints match the current
 locally issued server certificate and are replaced after recreation. End-user
 application selection, per-OS compatibility, kill switches, local-network
 blocking and device-side routing, DNS failover and certificate verification are
-outside Bastion acceptance criteria. A successful build SHALL NOT be treated as
+outside Bastion acceptance criteria. A successful syntax check or Ansible run SHALL NOT be treated as
 proof of remote reachability or client leak prevention.
 
-#### Scenario: Build passes but server connectivity checks are absent
-- **WHEN** the system builds successfully without the required server connectivity and live-operation checks
+#### Scenario: Automation passes but server connectivity checks are absent
+- **WHEN** Ansible checks pass without the required server connectivity and live-operation checks
 - **THEN** readiness is not declared
 - **AND** the remaining server checks are identified
 

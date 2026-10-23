@@ -1,0 +1,11 @@
+---
+- name: Bootstrap the Ubuntu platform
+  hosts: bootstrap
+  remote_user: "{{ ansible_user }}"
+  become: true
+  become_method: ansible.builtin.sudo
+  gather_facts: true
+  roles:
+    - platform
+    - secrets_administration
+    - administration

@@ -1,10 +1,11 @@
 schema: spec-driven
 
 context: |
-  Bastion is a private NixOS VPN server project. Communicate with the owner in Russian.
+  Bastion configures a private Ubuntu Server VPN through Ansible. Communicate with the owner in Russian.
   Read openspec/README.md and the relevant openspec/specs/<capability>/spec.md files.
   The specs are target requirements migrated from AGENTS.md, not implemented behavior.
-  No NixOS configuration, management commands, builds or integration tests exist yet.
+  Retained NixOS code and archived verification are historical, not Ubuntu/Ansible evidence.
+  The read-only source is /home/alejandro/go/src/ansible; needed secrets may be copied securely during implementation.
   Design proposals and unresolved choices live in openspec/notes/design-and-open-questions.md.
   Historical research lives in openspec/notes/research.md; recheck it before implementation.
   Follow AGENTS.md for tools, workflow, authorization and secret-handling rules.
@@ -17,7 +18,7 @@ rules:
     - Do not claim that a specified capability is already implemented or verified.
   design:
     - Resolve choices relevant to the change with the owner; do not silently select proposals.
-    - Prefer the smallest readable solution using native NixOS modules and existing tools.
+    - Prefer the smallest readable solution using Ansible modules, native Ubuntu services and existing tools.
   tasks:
     - Include focused regression and integration checks appropriate to the changed behavior.
     - Keep implementation, verification and deployment status explicit; report unrun checks.

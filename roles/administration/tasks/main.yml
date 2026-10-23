@@ -1,0 +1,124 @@
+---
+- name: Read stable admin password hash
+  ansible.builtin.command:
+    argv:
+      - cat
+      - /run/secrets/bastion/admin-password-hash
+  register: administration_admin_password_hash
+  changed_when: false
+  check_mode: false
+  no_log: true
+  diff: false
+
+- name: Read stable root password hash
+  ansible.builtin.command:
+    argv:
+      - cat
+      - /run/secrets/bastion/root-password-hash
+  register: administration_root_password_hash
+  changed_when: false
+  check_mode: false
+  no_log: true
+  diff: false
+
+- name: Create the admin account
+  ansible.builtin.user:
+    name: admin
+    password: "{{ administration_admin_password_hash.stdout }}"
+    update_password: always
+    create_home: true
+    shell: /bin/bash
+  no_log: true
+  diff: false
+
+- name: Set the stable root password hash
+  ansible.builtin.user:
+    name: root
+    password: "{{ administration_root_password_hash.stdout }}"
+    update_password: always
+  no_log: true
+  diff: false
+
+- name: Create protected admin SSH directory
+  ansible.builtin.file:
+    path: /home/admin/.ssh
+    state: directory
+    owner: admin
+    group: admin
+    mode: '0700'
+
+- name: Install only the owner public SSH key
+  ansible.builtin.copy:
+    content: "{{ admin_authorized_key }}\n"
+    dest: /home/admin/.ssh/authorized_keys
+    owner: admin
+    group: admin
+    mode: '0600'
+  no_log: true
+  diff: false
+
+- name: Validate admin SSH restriction configuration
+  ansible.builtin.template:
+    src: 90-bastion-admin.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-bastion-admin.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart SSH
+  when: bastion_apply_final_ssh_policy | bool
+
+- name: Read effective SSH restriction configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -f
+      - /etc/ssh/sshd_config
+  register: administration_sshd_effective
+  changed_when: false
+  check_mode: false
+  when: bastion_apply_final_ssh_policy | bool
+
+- name: Require effective SSH restrictions before reload
+  ansible.builtin.assert:
+    that:
+      - "'allowusers admin' in administration_sshd_effective.stdout_lines"
+      - "'permitrootlogin no' in administration_sshd_effective.stdout_lines"
+      - "'passwordauthentication no' in administration_sshd_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in administration_sshd_effective.stdout_lines"
+      - "'pubkeyauthentication yes' in administration_sshd_effective.stdout_lines"
+    fail_msg: >-
+      The effective SSH configuration conflicts with Bastion's final admin-only
+      policy. Resolve the conflicting sshd_config.d file before retrying.
+  when: bastion_apply_final_ssh_policy | bool
+
+- name: Activate validated SSH configuration
+  ansible.builtin.meta: flush_handlers
+  when: bastion_apply_final_ssh_policy | bool
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+    update_cache: false
+
+- name: Enable the packaged SSH jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/bastion-sshd.conf
+    content: |
+      [sshd]
+      enabled = true
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban.service
+    enabled: true
+    state: started
+
+- name: Apply Fail2ban SSH filter configuration
+  ansible.builtin.meta: flush_handlers

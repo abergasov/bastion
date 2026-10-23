@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Validate the local bootstrap contract before Ansible can change a host."""
+
+import base64
+import ipaddress
+import json
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+INVENTORY = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "inventory/hosts.ini"
+KNOWN_HOSTS = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "inventory/known_hosts"
+REQUIRED = {
+    "ansible_host", "ansible_user", "netplan_interface", "ipv4_address",
+    "ipv4_prefix", "ipv4_gateway", "ipv6_address", "ipv6_prefix", "ipv6_gateway",
+    "dns_servers",
+}
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"preflight-bastion: {message}")
+
+
+def public_address(value: str, version: int) -> ipaddress._BaseAddress:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        fail(f"invalid IP address: {value}")
+    if address.version != version or not address.is_global:
+        fail(f"address must be public IPv{version}: {value}")
+    return address
+
+
+def inventory_sections() -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    try:
+        lines = INVENTORY.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        fail(f"cannot read inventory: {error}")
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        section = re.fullmatch(r"\[([A-Za-z0-9_-]+)\]", line)
+        if section:
+            if section.group(1) in sections:
+                fail(f"duplicate inventory group: {section.group(1)}")
+            current = sections.setdefault(section.group(1), [])
+        elif current is None:
+            fail("inventory entry is outside a group")
+        else:
+            current.append(line)
+    return sections
+
+
+def main() -> None:
+    sections = inventory_sections()
+    if set(sections) != {"bootstrap", "bastion_admin"}:
+        fail("inventory must contain only bootstrap and bastion_admin groups")
+    if len(sections["bootstrap"]) != 1 or sections["bastion_admin"] != ["bastion"]:
+        fail("bootstrap must define one host named bastion and bastion_admin must contain it")
+    try:
+        fields = shlex.split(sections["bootstrap"][0])
+    except ValueError as error:
+        fail(f"invalid bootstrap host line: {error}")
+    if not fields or fields[0] != "bastion":
+        fail("bootstrap host must be named bastion")
+    values: dict[str, str] = {}
+    for field in fields[1:]:
+        if "=" not in field:
+            fail("bootstrap host values must be key=value")
+        key, value = field.split("=", 1)
+        if not key or not value or key in values:
+            fail("bootstrap host has invalid or duplicate values")
+        values[key] = value
+    if not REQUIRED <= values.keys():
+        fail("bootstrap host has incomplete connection or network inputs")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", values["netplan_interface"]):
+        fail("netplan_interface is invalid")
+    host = public_address(values["ansible_host"], 4)
+    ipv4 = public_address(values["ipv4_address"], 4)
+    ipv6 = public_address(values["ipv6_address"], 6)
+    try:
+        ipv4_prefix = int(values["ipv4_prefix"])
+        ipv6_prefix = int(values["ipv6_prefix"])
+        ipaddress.ip_interface(f"{ipv4}/{ipv4_prefix}")
+        ipaddress.ip_interface(f"{ipv6}/{ipv6_prefix}")
+    except ValueError:
+        fail("network prefix is invalid")
+    gateway4 = ipaddress.ip_address(values["ipv4_gateway"])
+    if gateway4.version != 4:
+        fail("ipv4_gateway must be IPv4")
+    gateway6 = ipaddress.ip_address(values["ipv6_gateway"])
+    if gateway6.version != 6:
+        fail("ipv6_gateway must be IPv6")
+    try:
+        dns_servers = json.loads(values["dns_servers"])
+    except json.JSONDecodeError:
+        fail("dns_servers must be a JSON list")
+    if not isinstance(dns_servers, list) or not dns_servers:
+        fail("dns_servers must be a nonempty JSON list")
+    for server in dns_servers:
+        if not isinstance(server, str):
+            fail("dns_servers entries must be IP addresses")
+        try:
+            address = ipaddress.ip_address(server)
+        except ValueError:
+            fail(f"invalid DNS server: {server}")
+        if (address.is_unspecified or address.is_multicast or address.is_loopback
+                or address == ipaddress.ip_address("255.255.255.255")):
+            fail(f"DNS server must be a usable unicast address: {server}")
+    try:
+        expected = [line.split() for line in KNOWN_HOSTS.read_text(encoding="utf-8").splitlines()
+                    if line and not line.startswith("#")]
+    except OSError as error:
+        fail(f"cannot read known_hosts: {error}")
+    exact = [entry for entry in expected if len(entry) == 3 and entry[0] == str(host) and entry[1] == "ssh-ed25519"]
+    if len(exact) != 1:
+        fail("known_hosts must contain exactly one ed25519 key for ansible_host")
+    try:
+        base64.b64decode(exact[0][2], validate=True)
+    except ValueError:
+        fail("known_hosts ed25519 key is not base64")
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "GlobalKnownHostsFile=/dev/null", "-o",
+           f"UserKnownHostsFile={KNOWN_HOSTS}", "-o", "StrictHostKeyChecking=yes",
+           f"{values['ansible_user']}@{host}"]
+    os_release = subprocess.run(ssh + ["cat /etc/os-release"], text=True, capture_output=True)
+    if os_release.returncode != 0:
+        fail("SSH host identity verification or OS release read failed")
+    release = dict(line.split("=", 1) for line in os_release.stdout.splitlines() if "=" in line)
+    if release.get("ID") != "ubuntu" or release.get("VERSION_ID", "").strip('"') != "26.04":
+        fail("target must run Ubuntu 26.04")
+    uid = subprocess.run(ssh + ["id -u"], text=True, capture_output=True)
+    if uid.returncode == 0 and uid.stdout.strip() == "0":
+        return
+    sudo = subprocess.run(ssh + ["sudo -n true"], text=True, capture_output=True)
+    if sudo.returncode != 0:
+        fail("bootstrap account must be root or allow passwordless sudo")
+
+
+if __name__ == "__main__":
+    main()

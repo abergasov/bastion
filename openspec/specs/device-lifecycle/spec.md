@@ -79,11 +79,12 @@ For client enrollment, the VPS SHALL receive only public verification and access
 data: WireGuard public keys and assigned addresses, and OpenVPN CA certificate,
 signed certificates as needed, CRL and public device metadata. Its persistent
 runtime files SHALL be the deployed representation of local enrollment/revocation
-records, outside Git, `/nix/store` and NixOS system generations. NixOS SHALL
-configure services/networking without a competing membership list.
+records, separate from Git-tracked playbooks, inventory and templates. Ansible
+SHALL configure services/networking without a competing membership list and
+SHALL NOT overwrite current access state on a rerun.
 
 The VPS still requires its own VPN server private keys. These SHALL be provisioned
-separately through SOPS and sops-nix as specified in
+separately through SOPS and its Ansible-managed runtime integration as specified in
 [recovery-and-verification](../recovery-and-verification/spec.md). Administrative
 access to deployed state SHALL require root privileges; services SHALL receive only
 the file access necessary for their operation.
@@ -98,10 +99,10 @@ the file access necessary for their operation.
 - **THEN** its keypair and signed certificate are created locally and its private key stays off the VPS
 - **AND** the VPS verifies client certificates using the public CA certificate without the CA private key
 
-#### Scenario: Rebuild or roll back NixOS
-- **WHEN** the server's NixOS configuration is rebuilt or rolled back
+#### Scenario: Reapply or restore configuration
+- **WHEN** the server's Ansible configuration is reapplied or a supported configuration restore is performed
 - **THEN** the current deployed membership and revocation state remains effective
-- **AND** an older system generation does not restore old membership
+- **AND** an older playbook or inventory revision does not restore old membership
 
 ### Requirement: Authenticated and consistent mutations
 
@@ -156,12 +157,12 @@ is unavailable, export SHALL fail rather than omit the pin or reuse a stale one.
 ### Requirement: Effective WireGuard revocation
 
 WireGuard revocation SHALL remove the peer from both the running interface and the
-persistent source loaded after restart or rebuild.
+persistent source loaded after restart or Ansible reapplication.
 
 #### Scenario: Revoke an active peer
 - **WHEN** WireGuard revocation reports success
 - **THEN** the device no longer has access through the running interface
-- **AND** restarting or rebuilding does not restore the peer
+- **AND** restarting or reapplying configuration does not restore the peer
 
 ### Requirement: Effective OpenVPN revocation
 
@@ -188,14 +189,14 @@ setting alone is not evidence of fail-closed behavior.
 
 ### Requirement: Revocations survive system lifecycle operations
 
-A reboot, NixOS rebuild, rollback, backup restore or server recreation SHALL NOT
+A reboot, Ansible rerun, package update, configuration restore, backup restore or server recreation SHALL NOT
 silently reauthorize revoked credentials. Restores SHALL reconcile current
 revocations from authoritative local records before exposing VPN listeners.
 Local records and deployed server runtime state SHALL remain independent of
-NixOS system generations. If current revocation state is unavailable, recovery
+playbook, inventory and package revisions. If current revocation state is unavailable, recovery
 SHALL use fresh trust material rather than restore stale access grants.
 
 #### Scenario: Restore older state
-- **WHEN** a previous system generation or backup contains a formerly authorized device
+- **WHEN** a previous configuration revision or backup contains a formerly authorized device
 - **THEN** current revocations are reconciled before VPN access is exposed
 - **AND** that device remains denied

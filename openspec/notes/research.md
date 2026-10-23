@@ -1,5 +1,10 @@
 # Historical research — 2026-10-19
 
+> Historical NixOS-era research. The target is now Ubuntu Server + Ansible;
+> see the [2026-10-23 transition record](ubuntu-ansible-transition.md) for the
+> re-inspected local source and superseded platform choices. Upstream findings
+> below were not revalidated in this documentation update.
+
 Transferred from AGENTS.md without rechecking upstream. These observations describe the inspected references, not an implemented Bastion server. Recheck relevant sources before implementation.
 
 ## Existing setup: reference, not a migration specification

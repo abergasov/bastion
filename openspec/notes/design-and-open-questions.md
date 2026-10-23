@@ -2,6 +2,30 @@
 
 Transferred from AGENTS.md on 2026-10-19. This document is non-normative: proposals are not approved decisions. Where the original discussion repeats a confirmed constraint, the normative requirement lives in [the specifications](../README.md). Resolve choices with the owner before implementing the affected behavior.
 
+## Confirmed decisions — 2026-10-23: Ubuntu and Ansible
+
+The owner replaces NixOS with ordinary Ubuntu Server configured through Ansible,
+using `/home/alejandro/go/src/ansible` as a read-only source and permitting reuse
+of needed secrets. The current request is specifications and plans only.
+See the [transition record](ubuntu-ansible-transition.md) for inspected files and
+safe reuse boundaries.
+
+This supersedes the earlier NixOS release/flake policy, nixos-anywhere/disko
+installation, on-VPS system builds, Nix generations and sops-nix integration.
+Ansible provisions an existing Ubuntu installation; updates are manual package
+and configuration operations. Initial and repeated apply, Ubuntu VM tests and
+runtime secret recovery after boot replace Nix evaluation/build checks.
+
+All other agreed behavior remains, including SOPS/age recipient separation,
+local-only CA/client keys, admin + su, VPN isolation and revocation. Ansible Vault
+is an import source, not an approved replacement for the encrypted storage model.
+A supported Ubuntu release and compatible tool versions are selected and verified
+during implementation; no exact release is selected here.
+
+The dated sections below are decision history. Their NixOS-specific statements
+are superseded by this section and the current specifications; they are not
+instructions to implement or deploy the old platform.
+
 ## Confirmed decisions — 2026-10-19
 
 - Target servers have approximately 1 vCPU, 2 GB RAM and 20 GB local disk. This is the resource class for implementation and verification, not a measured minimum or a throughput guarantee. The owner's current plan's price and traffic allowance are not portable requirements. Installation, operation and updates must be checked on this resource class; updates are built on the VPS itself and any needed swap must be documented. An external builder is not the selected workflow. See [server-platform](../specs/server-platform/spec.md).
@@ -47,7 +71,7 @@ These details are not additional owner decisions required before implementation.
 Select the smallest native implementation satisfying the specifications; proposals
 below do not independently impose requirements.
 
-- Begin with small native modules for host configuration, administrative access/firewall, WireGuard, OpenVPN, and notifications. Avoid containers, a web administration panel, and orchestration frameworks unless a concrete requirement calls for them.
+- Begin with small Ansible roles using native Ubuntu services for host configuration, administrative access/firewall, WireGuard, OpenVPN, and notifications. Avoid containers, a web administration panel, and orchestration frameworks unless a concrete requirement calls for them.
 - Explicitly disable keyboard-interactive SSH authentication. Admin-only SSH-key login, prohibiting direct root SSH login, switching to root through `su`, and setting predefined `admin`/`root` passwords at initial setup are agreed. Recovery still uses server recreation without requiring console access.
 - Select VPN address pools and firewall rules that implement the agreed inbound/outbound policy and client isolation. Do not mark entire VPN interfaces trusted.
 - Select OpenVPN parameters for the agreed performance objective while preserving security; the earlier list of AEAD, no compression and tls-crypt-v2 was a proposal, not an approved parameter set.
@@ -62,4 +86,4 @@ below do not independently impose requirements.
 ## Inputs and checks remaining before installation
 
 - Supply concrete public IPv4/IPv6 addresses in local host configuration and verify the source OS's SSH account, installation privileges and host identity for the chosen VPS.
-- Verify the current stable NixOS release, upstream compatibility and performance choices during implementation. These are engineering checks, not pending owner policy decisions.
+- Select and verify a supported Ubuntu Server release, compatible Ansible/tool versions, upstream compatibility and performance choices during implementation. These are engineering checks, not pending owner policy decisions.

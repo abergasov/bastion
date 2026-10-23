@@ -1,0 +1,19 @@
+network:
+  version: 2
+  ethernets:
+    {{ netplan_interface }}:
+      optional: true
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - {{ ipv4_address }}/{{ ipv4_prefix }}
+        - {{ ipv6_address }}/{{ ipv6_prefix }}
+      nameservers:
+        addresses: {{ dns_servers | to_json }}
+      routes:
+        - to: default
+          via: {{ ipv4_gateway }}
+          on-link: true
+        - to: default
+          via: {{ ipv6_gateway }}
+          on-link: true

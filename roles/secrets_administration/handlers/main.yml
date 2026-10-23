@@ -1,0 +1,9 @@
+---
+- name: Restart Bastion secrets
+  ansible.builtin.systemd_service:
+    name: bastion-secrets.service
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  no_log: true
+  diff: false

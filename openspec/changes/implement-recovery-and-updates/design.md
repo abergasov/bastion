@@ -2,8 +2,7 @@
 
 ## Context
 
-См. [proposal.md](proposal.md). Репозиторий greenfield: нет NixOS-конфигурации,
-управляющих команд, тестов, развернутого VPS или результатов проверок. Baseline
+См. [proposal.md](proposal.md). Ubuntu/Ansible implementation и её evidence ещё отсутствуют; исторические NixOS проверки не подтверждают новый baseline. Baseline
 уже определяет поведение; этот change объединяет результаты platform, secrets,
 VPN, lifecycle и notifications в один путь обновления, восстановления и
 доказательства готовности.
@@ -12,7 +11,7 @@ VPN, lifecycle и notifications в один путь обновления, во�
 
 **Goals:**
 
-- Дать минимальные операторские процедуры для ручного update, rebuild, reboot,
+- Дать минимальные операторские процедуры для ручного update, reapply, reboot,
   recreation и recovery после компрометации.
 - Сохранить authority локальных записей и запретить stale restore возвращать
   отозванный доступ.
@@ -32,23 +31,25 @@ VPN, lifecycle и notifications в один путь обновления, во�
 
 ### Один ручной путь обновления
 
-Операторская инструкция после результатов `implement-nixos-platform` повторно
-использует его native commands: меняет locked inputs, запускает check и build на
-VPS, применяет только успешную конфигурацию, сохраняет действующую SSH-сессию и
-затем проверяет новый вход SSH и оба VPN. Критический security fix использует
+Операторская инструкция после результатов `implement-ubuntu-platform` повторно
+использует его Ansible maintenance workflow: review package/dependency changes,
+syntax/lint и isolated integration checks, затем обновление пакетов и конфигурации
+при сохранённой SSH-сессии и проверка нового входа SSH и обоих VPN. Ошибки
+пакетных операций сообщаются как partial failure, без обещания atomic rollback. Критический security fix использует
 тот же путь вне weekly window. Reboot выполняется вручную только когда он
 требуется и повторяет эти проверки.
 
-Это выполняет [ручные обновления](../../specs/server-platform/spec.md#requirement-manual-updates-built-on-the-vps)
-без отдельного updater или remote builder. Откат Nix generation допустим только
-для конфигурации: он не заменяет runtime membership и перед открытием VPN не
-может оживить старые grants.
+Это выполняет [ручные обновления](../../specs/server-platform/spec.md#requirement-manual-package-and-configuration-updates)
+без отдельного updater. Поддерживаемое повторное применение прежней конфигурации
+не заменяет runtime membership и перед открытием VPN не возвращает старые grants.
+Произвольные package downgrades и атомарный откат ОС не гарантируются; при потере
+доступа применяется recovery через пересоздание.
 
 ### Восстановление пересозданием с двумя причинами
 
 При потере сервера или административного доступа оператор использует
 installation workflow platform change для нового VPS, с проверкой его host key
-и привилегий до destructive operation. Для replacement создаются локально новый
+и bootstrap privileges до изменения Ubuntu configuration; provisioning не форматирует диски. Для replacement создаются локально новый
 OpenVPN server key/certificate и новые профили с единственным fingerprint;
 старый ключ и сертификат не возвращаются. Новый VPS age recipient заменяет
 старый в SOPS ciphertext, а WireGuard server key допускается сохранить только
@@ -72,13 +73,13 @@ Local encrypted credential state остаётся единственной autho
 только committed и pushed ciphertext. Перед публикацией любого recovered state
 сверяется current local revocation record. При отсутствии такого record recovery
 создаёт fresh trust material и явное re-enrollment, вместо применения старого
-generation, backup или repository revision. Потеря owner age key вместе с
+configuration revision, backup или repository revision. Потеря owner age key вместе с
 decrypted local state требует новой owner identity и новых credentials; отдельный
 backup key или автоматический push не добавляются.
 
 Так сохраняются [revocations](../../specs/device-lifecycle/spec.md#requirement-revocations-survive-system-lifecycle-operations)
 и [owner-only state](../../specs/recovery-and-verification/spec.md#requirement-owner-only-age-encryption-of-local-credential-state).
-Альтернатива с восстановлением из Nix generation, старого ciphertext или
+Альтернатива с восстановлением из configuration revision, старого ciphertext или
 дополнительного backup-service отвергнута: она либо не доказывает актуальность
 revocation, либо выходит за утвержденный scope.
 
@@ -86,8 +87,8 @@ revocation, либо выходит за утвержденный scope.
 
 После объединения changes 1–5 автоматизированный gate повторно использует их
 component suites для platform, secrets, VPN, lifecycle и notifications, запускает
-formatter, static checks, `nix flake check` и closure build. Этот change добавляет
-только cross-component recovery scenarios: rebuild/reboot, supported rollback,
+formatter, static checks, `ansible-playbook --syntax-check`, `ansible-lint` и idempotence checks. Этот change добавляет
+только cross-component recovery scenarios: reapply/reboot, package updates, supported configuration restore,
 recreation, stale restore, recipient separation, partial failures и отрицательные
 проверки revoked identities.
 
@@ -96,7 +97,7 @@ Future live checklist запускается только после отдел�
 endpoint, IPv4/IPv6 forwarding, IPv6 preference и IPv4 fallback, оба public DNS
 через оба VPN, isolation, OpenVPN performance, profile fingerprint, log rotation,
 notification service restart и actual reboot. Он фиксирует результат, exclusions
-и unrun checks, не объявляя build доказательством remote reachability. Проверки
+и unrun checks, не объявляя успешный Ansible run доказательством remote reachability. Проверки
 на каждом пользовательском устройстве в checklist не входят.
 
 Live recreation и compromise exercise остаются отдельными optional destructive
@@ -113,8 +114,8 @@ blocker для readiness.
   достаточным recovery.
 - [Неудачный update лишает SSH-доступа] → сохранить существующую сессию до
   fresh SSH check; после подтвержденной потери доступа применить recreation.
-- [Успешный build ошибочно объявлен readiness] → хранить evidence отдельно для
-  build/integration/live и явно отмечать непроведённые проверки.
+- [Успешный Ansible run ошибочно объявлен readiness] → хранить evidence отдельно для
+  syntax/lint/idempotence/integration/live и явно отмечать непроведённые проверки.
 - [Потеря owner key делает GitHub ciphertext бесполезным] → новая identity,
   fresh credentials и re-enrollment; дополнительный backup намеренно отсутствует.
 
@@ -122,7 +123,7 @@ blocker для readiness.
 
 1. После завершения changes 1–5 реализовать их contracts и operator docs,
    затем добавить интеграционный recovery/update workflow.
-2. Выполнить local build и NixOS/integration checks, сохранив evidence и
+2. Выполнить Ansible syntax/lint/idempotence и Ubuntu VM/integration checks, сохранив evidence и
    невыполненные проверки.
 3. Только после отдельной авторизации выполнить installation, update,
    recreation или live checklist. Если runtime state нельзя безопасно

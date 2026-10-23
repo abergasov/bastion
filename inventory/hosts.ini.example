@@ -1,0 +1,5 @@
+[bootstrap]
+bastion ansible_host=203.0.113.10 ansible_user=root netplan_interface=ens3 ipv4_address=203.0.113.10 ipv4_prefix=32 ipv4_gateway=203.0.113.1 ipv6_address=2001:db8::10 ipv6_prefix=64 ipv6_gateway=fe80::1 dns_servers='["1.1.1.1","2606:4700:4700::1111"]'
+
+[bastion_admin]
+bastion

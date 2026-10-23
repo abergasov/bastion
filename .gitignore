@@ -1,3 +1,6 @@
 .idea/*
 .serena/*
+inventory/hosts.ini
+inventory/known_hosts
+inventory/secrets-input.json
 hosts/bastion/host-input.nix

@@ -2,9 +2,9 @@
 
 ## Context
 
-См. [proposal.md](proposal.md) для мотивации. Репозиторий greenfield: NixOS-конфигурации, management CLI и NixOS-тесты ещё отсутствуют. Baseline [vpn-connectivity](../../specs/vpn-connectivity/spec.md) уже определяет требуемое внешнее поведение; этот change его реализует и потому не содержит delta-спецификаций.
+См. [proposal.md](proposal.md) для мотивации. Ubuntu/Ansible implementation и её проверки ещё отсутствуют; сохранённый NixOS foundation является историческим. Baseline [vpn-connectivity](../../specs/vpn-connectivity/spec.md) уже определяет требуемое внешнее поведение; этот change его реализует и потому не содержит delta-спецификаций.
 
-До реализации необходимы результаты `implement-nixos-platform` (flake, хост, адреса, базовая сеть) и `implement-secrets-and-administration` (SOPS/sops-nix и защищённые runtime-файлы серверных ключей). `implement-device-lifecycle` остаётся владельцем выдачи, отзыва и экспорта устройств; его работа не является предварительным условием для создания VPN-конфигурации и test fixtures.
+До реализации необходимы результаты `implement-ubuntu-platform` (inventory, playbook, хост, адреса, базовая сеть) и `implement-ubuntu-secrets-administration` (SOPS/age и защищённые runtime-файлы серверных ключей). `implement-device-lifecycle` остаётся владельцем выдачи, отзыва и экспорта устройств; его работа не является предварительным условием для создания VPN-конфигурации и test fixtures.
 
 ## Goals / Non-Goals
 
@@ -23,9 +23,9 @@
 
 ## Decisions
 
-### Нативные NixOS-сервисы и секреты в runtime
+### Нативные Ubuntu-сервисы и секреты в runtime
 
-Реализация использует поддерживаемые на выбранной pinned NixOS native modules и пакеты для OpenVPN, WireGuard, сетевой фильтрации и systemd. Приватные ключи серверов берутся только из защищённых SOPS/sops-nix runtime-файлов; CA private key и client private keys не появляются на VPS. Это сохраняет декларативность платформы и границу секретов из `recovery-and-verification`.
+Реализация использует Ansible modules и native packages/services выбранного поддерживаемого Ubuntu release для OpenVPN, WireGuard, сетевой фильтрации и systemd. Приватные ключи серверов берутся только из защищённых SOPS/age runtime-файлов; CA private key и client private keys не появляются на VPS. Это сохраняет декларативность платформы и границу секретов из `recovery-and-verification`.
 
 Альтернатива — перенос старых интерактивных installer-скриптов или отдельный framework управления VPN — отклоняется: она создаёт второй lifecycle и не нужна для требуемой серверной конфигурации.
 
@@ -33,7 +33,7 @@
 
 Конфигурация включает kernel forwarding для IPv4 и IPv6 и применяет правила к обоим семействам. Политика входа допускает только SSH, TCP/443 OpenVPN и UDP/443 WireGuard, а также established/related и необходимый control traffic. Политика forwarding сначала запрещает трафик между адресными пулами и интерфейсами VPN, затем разрешает трафик туннель→интернет через VPS и его обратные ответы. Она не вводит ограничений направлений или портов для VPS либо аутентифицированных VPN-клиентов.
 
-Такой порядок даёт одну точку для межпротокольной IPv4/IPv6 изоляции, вместо разрозненных протокольных запретов. Аутентификация SSH и fail2ban остаются зоной `implement-secrets-and-administration`; этот change лишь оставляет SSH разрешённым входящим сервисом.
+Такой порядок даёт одну точку для межпротокольной IPv4/IPv6 изоляции, вместо разрозненных протокольных запретов. Аутентификация SSH и fail2ban остаются зоной `implement-ubuntu-secrets-administration`; этот change лишь оставляет SSH разрешённым входящим сервисом.
 
 ### Full tunnel, DNS и IPv6 preference
 
@@ -48,13 +48,13 @@
 - для WireGuard: public key пира и назначенные tunnel IPv4/IPv6 addresses;
 - для OpenVPN: CA certificate, выданные public verification данные, CRL и public device metadata.
 
-Точные protocol paths и сериализация выбираются при реализации совместимо с native services. Контракт запрещает CA private key и client private keys, а NixOS-конфигурации запрещено иметь параллельный статический список пиров или участников в `/nix/store` и system generations. Изменения этого состояния публикуются целиком; server-side hooks этого change применяют и проверяют уже опубликованное состояние. `implement-device-lifecycle` владеет механизмом публикации, live add/revoke и исходными records, поэтому обратной зависимости от этого change нет.
+Точные protocol paths и сериализация выбираются при реализации совместимо с native services. Контракт запрещает CA private key и client private keys, а Ansible-конфигурации запрещено иметь параллельный статический список пиров или участников в tracked Ansible inventory/templates. Изменения этого состояния публикуются целиком; server-side hooks этого change применяют и проверяют уже опубликованное состояние. `implement-device-lifecycle` владеет механизмом публикации, live add/revoke и исходными records, поэтому обратной зависимости от этого change нет.
 
-Для NixOS-тестов допускаются test-only public fixtures, заранее помещаемые в ту же границу состояния. Они проверяют серверное применение правил и не имитируют management CLI или генерацию credential.
+Для Ubuntu VM-тестов допускаются test-only public fixtures, заранее помещаемые в ту же границу состояния. Они проверяют серверное применение правил и не имитируют management CLI или генерацию credential.
 
 ### Параметры OpenVPN выбираются по актуальным данным
 
-На этапе реализации проверяются официальный OpenVPN manual и документация выбранных версий NixOS/nixpkgs: поддержка cipher/auth, compression policy, control-channel protection и доступное acceleration. Выбор фиксируется рядом с конфигурацией и измеряется на целевом VPS-классе. Это лучше заранее закреплённого набора параметров из исторического Ansible, поскольку baseline требует безопасность и практическую производительность, но не конкретный устаревающий механизм.
+На этапе реализации проверяются официальный OpenVPN manual и документация выбранных версий Ubuntu packages: поддержка cipher/auth, compression policy, control-channel protection и доступное acceleration. Выбор фиксируется рядом с конфигурацией и измеряется на целевом VPS-классе. Это лучше заранее закреплённого набора параметров из исторического Ansible, поскольку baseline требует безопасность и практическую производительность, но не конкретный устаревающий механизм.
 
 ## Risks / Trade-offs
 
@@ -62,11 +62,11 @@
 - [Firewall разрешит VPN peer-to-peer трафик из-за порядка правил] → отдельные IPv4/IPv6 проверки матрицы WireGuard↔WireGuard, OpenVPN↔OpenVPN и WireGuard↔OpenVPN до разрешения tunnel egress.
 - [Некорректное или неполное public state при обновлении] → lifecycle публикует состояние атомарно; server hooks валидируют и применяют только завершённую версию, а конфигурация не содержит второго membership list.
 - [OpenVPN настройки не поддержаны pinned версиями или превышают 1 vCPU] → сверить upstream в момент реализации, сохранить измерения throughput/CPU и не заявлять непроверенные пределы.
-- [Успешная NixOS VM-проверка не доказывает публичную достижимость DNS] → до readiness выполнить и явно отчитаться о live checks обоих резолверов и обоих VPN через VPS.
+- [Успешная Ubuntu VM-проверка не доказывает публичную достижимость DNS] → до readiness выполнить и явно отчитаться о live checks обоих резолверов и обоих VPN через VPS.
 
 ## Migration Plan
 
-1. После завершения platform и secrets changes добавить серверные сетевые и VPN-модули, не публикуя live membership state в Nix store.
-2. Добавить public fixtures и NixOS checks для listener/firewall, туннельного IPv4/IPv6 forwarding, DNS-order, DNS reachability и peer isolation.
-3. Провести build и NixOS component checks server-side consumer на public fixtures; полная orchestration-интеграция publish hook остаётся задачей владельца `implement-device-lifecycle` и не блокирует завершение этого change.
+1. После завершения platform и secrets changes добавить Ansible-роли сети и VPN, не публикуя live membership state в tracked inventory/templates.
+2. Добавить public fixtures и Ubuntu VM checks для listener/firewall, туннельного IPv4/IPv6 forwarding, DNS-order, DNS reachability и peer isolation.
+3. Провести Ansible syntax/lint, idempotence и Ubuntu VM component checks server-side consumer на public fixtures; полная orchestration-интеграция publish hook остаётся задачей владельца `implement-device-lifecycle` и не блокирует завершение этого change.
 4. Передать `implement-recovery-and-updates` checklist для live throughput/DNS/connectivity и безопасного rollout. Фактические live checks, сохранение SSH-сессии и deployment выполняются только в шестом change после завершения всех foundations. Этот planning change ничего не развёртывает.

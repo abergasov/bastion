@@ -10,11 +10,11 @@ SSH-логинах и реальной загрузке сервера без п
 
 ## What Changes
 
-- Добавить воспроизводимо закреплённый Nix-пакет `ssh_notify`; при подтверждённой
-  несовместимости выбранного формата NixOS OpenSSH-лога внести только требуемый
+- Добавить воспроизводимо закреплённый Ansible artifact `ssh_notify`; при подтверждённой
+  несовместимости выбранного формата Ubuntu OpenSSH-лога внести только требуемый
   локальный patch в этот пакет.
 - Настроить службу, которая читает защищённый runtime-файл полной конфигурации,
-  созданный sops-nix из SOPS/age ciphertext, и обрабатывает SSH-логины с
+  созданный Ansible-managed SOPS из SOPS/age ciphertext, и обрабатывает SSH-логины с
   сохранением работы после ротации лога.
 - Добавить явный механизм уведомления о загрузке/перезагрузке, который не
   принимает запуск или рестарт самой службы за перезагрузку системы.
@@ -39,11 +39,11 @@ SSH-логинах и реальной загрузке сервера без п
 
 ## Impact
 
-Будут добавлены будущие Nix package/module, service unit, encrypted
+Будут добавлены будущие Ansible role/artifact, service unit, encrypted
 ssh_notify-конфигурация без plaintext и focused tests. Change зависит от
-`implement-nixos-platform` и `implement-secrets-and-administration`: первый
-предоставляет NixOS-фундамент и журналы, второй — общую SOPS/age и sops-nix
+`implement-ubuntu-platform` и `implement-ubuntu-secrets-administration`: первый
+предоставляет Ubuntu/Ansible-фундамент и журналы, второй — общую SOPS/age и Ansible-managed SOPS
 runtime-инфраструктуру. Он независим от `implement-vpn-connectivity` и
 `implement-device-lifecycle`; `implement-recovery-and-updates` дополняет
 проверку восстановления и обновлений. Внешний репозиторий `ssh_notify` не
-изменяется: необходимый patch остаётся внутри закреплённого Nix-пакета Bastion.
+изменяется: необходимый patch остаётся внутри закреплённого Ansible artifact Bastion.

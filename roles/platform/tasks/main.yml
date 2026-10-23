@@ -1,0 +1,98 @@
+---
+- name: Require Ubuntu 26.04
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_version == '26.04'
+    fail_msg: Bastion supports Ubuntu Server 26.04 only.
+
+- name: Keep rsyslog available for the authentication log
+  ansible.builtin.apt:
+    name: rsyslog
+    state: present
+    update_cache: false
+
+- name: Configure persistent provider networking
+  ansible.builtin.template:
+    src: 99-bastion.yaml.j2
+    dest: /etc/netplan/99-bastion.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Apply Netplan
+
+- name: Disable future cloud-init network configuration
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-bastion-disable-network-config.cfg
+    content: "network: {config: disabled}\n"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Apply Netplan
+
+- name: Remove only cloud-init generated Netplan configuration
+  ansible.builtin.file:
+    path: /etc/netplan/50-cloud-init.yaml
+    state: absent
+  notify: Apply Netplan
+
+- name: Retain the system journal for 30 days
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create persistent journal storage
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '2755'
+  notify: Restart journald
+
+- name: Set the system journal retention policy
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/30-bastion-retention.conf
+    content: |
+      [Journal]
+      Storage=persistent
+      MaxRetentionSec=30day
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart journald
+
+- name: Rotate rsyslog text logs daily
+  ansible.builtin.lineinfile:
+    path: /etc/logrotate.d/rsyslog
+    regexp: '^\s*weekly\s*$'
+    line: '    daily'
+
+- name: Keep rsyslog text logs for 30 days
+  ansible.builtin.lineinfile:
+    path: /etc/logrotate.d/rsyslog
+    regexp: '^\s*rotate\s+\d+\s*$'
+    line: '    rotate 30'
+
+- name: Disable unattended package upgrades and automatic reboot
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Unattended-Upgrade "0";
+      Unattended-Upgrade::Automatic-Reboot "false";
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Disable automatic apt timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer

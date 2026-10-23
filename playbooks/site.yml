@@ -1,0 +1,22 @@
+---
+- name: Apply routine Bastion platform configuration
+  hosts: bastion_admin
+  remote_user: admin
+  become: true
+  become_method: ansible.builtin.su
+  gather_facts: true
+  pre_tasks:
+    - name: Prove the fresh routine connection is admin
+      ansible.builtin.command: id -un
+      register: site_connection_user
+      changed_when: false
+      check_mode: false
+      become: false
+
+    - name: Require the fresh routine connection to be admin
+      ansible.builtin.assert:
+        that: site_connection_user.stdout == 'admin'
+  roles:
+    - platform
+    - secrets_administration
+    - administration

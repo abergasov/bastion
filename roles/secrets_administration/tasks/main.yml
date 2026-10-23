@@ -1,0 +1,106 @@
+---
+- name: Require the pinned x86_64 SOPS runtime
+  ansible.builtin.assert:
+    that: ansible_architecture == 'x86_64'
+    fail_msg: Bastion SOPS runtime is pinned for x86_64 only.
+
+- name: Install age runtime
+  ansible.builtin.apt:
+    name: age
+    state: present
+    update_cache: true
+
+- name: Install pinned SOPS runtime
+  ansible.builtin.get_url:
+    url: https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+    dest: /usr/local/bin/sops
+    checksum: sha256:e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create protected secret source directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - /var/lib/bastion/age
+    - /var/lib/bastion/secrets
+    - /usr/local/libexec
+
+- name: Deliver VPS age identity
+  ansible.builtin.copy:
+    src: "{{ vps_age_identity_file }}"
+    dest: /var/lib/bastion/age/identity.txt
+    owner: root
+    group: root
+    mode: '0600'
+    decrypt: false
+  no_log: true
+  diff: false
+  notify: Restart Bastion secrets
+
+- name: Deliver encrypted server secrets
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../{{ sops_secrets_file }}"
+    dest: /var/lib/bastion/secrets/server.yaml
+    owner: root
+    group: root
+    mode: '0600'
+    decrypt: false
+  no_log: true
+  diff: false
+  notify: Restart Bastion secrets
+
+- name: Install runtime secrets decryptor
+  ansible.builtin.template:
+    src: bastion-decrypt-secrets.sh.j2
+    dest: /usr/local/libexec/bastion-decrypt-secrets
+    owner: root
+    group: root
+    mode: '0700'
+  notify: Restart Bastion secrets
+
+- name: Install runtime secrets systemd unit
+  ansible.builtin.template:
+    src: bastion-secrets.service.j2
+    dest: /etc/systemd/system/bastion-secrets.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Bastion secrets
+
+- name: Require secrets before SSH starts
+  ansible.builtin.file:
+    path: /etc/systemd/system/ssh.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Require secrets before SSH starts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ssh.service.d/bastion-secrets.conf
+    content: |
+      [Unit]
+      Requires=bastion-secrets.service
+      After=bastion-secrets.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Bastion secrets
+
+- name: Enable and start runtime secrets
+  ansible.builtin.systemd_service:
+    name: bastion-secrets.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  no_log: true
+  diff: false
+
+- name: Require refreshed runtime secrets before dependent administration
+  ansible.builtin.meta: flush_handlers

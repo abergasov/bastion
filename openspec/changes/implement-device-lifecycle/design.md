@@ -2,7 +2,7 @@
 
 ## Context
 
-В проекте нет конфигураций, Make-целей, скриптов и тестов. Baseline уже задаёт
+В проекте ещё нет device lifecycle implementation; исторический NixOS foundation не реализует Ubuntu/Ansible baseline. Baseline уже задаёт
 интерфейс управления, границу секретов, публичное состояние VPS, отзыв и
 восстановление; этот change реализует эти требования без их изменения. См.
 `proposal.md` и baseline [device-lifecycle](../../specs/device-lifecycle/spec.md),
@@ -48,8 +48,8 @@ public key/address и OpenVPN CA, сертификаты, CRL и public metadata
 выбираются при реализации вместе с fixture contract VPN change. «Public» здесь
 описывает содержание, а не world-readable permissions.
 
-Альтернатива — хранить membership в Nix-конфигурации или генерировать её на VPS —
-отклонена: она смешивает authority, возвращает старое состояние generation и
+Альтернатива — хранить membership в Ansible inventory/templates или генерировать её на VPS —
+отклонена: она смешивает authority, возвращает старое состояние из старой конфигурации и
 требует доставлять CA/client secret на VPS.
 
 ### Локальная выдача и server identity
@@ -58,8 +58,8 @@ public key/address и OpenVPN CA, сертификаты, CRL и public metadata
 поддерживаемым PKI-инструментом, выбранным после проверки актуальной upstream
 документации при реализации. Локально создаются ключи устройств и initial либо
 replacement keypair каждого VPN-сервера. Private keys OpenVPN и WireGuard
-серверов передаются только в отдельный SOPS/sops-nix поток
-`implement-secrets-and-administration`; CA и client private keys в него не
+серверов передаются только в отдельный SOPS/age поток
+`implement-ubuntu-secrets-administration`; CA и client private keys в него не
 попадают.
 Export берёт current locally issued server certificate и формирует ровно один
 `peer-fingerprint`; при отсутствии текущего сертификата или client private key
@@ -112,8 +112,8 @@ owner-only, Git-ignored profile из локальных private keys; удале
   сверяет authority с persistent/live server state и публикует недостающее.
 - [Сбой после публикации CRL] → revoke завершается partial failure, пока
   OpenVPN restart и отрицательное подключение revoked peer не проверены.
-- [Старый generation, backup или restore] → VPN runtime state не живёт в
-  generation; recovery до открытия listeners сверяет current local revocations,
+- [Старая конфигурация, backup или restore] → VPN runtime state не живёт в
+  inventory/templates; recovery до открытия listeners сверяет current local revocations,
   иначе использует fresh trust material.
 - [Root на VPS скомпрометирован] → он может изменить admission, но не получает
   CA/client keys; восстановление и rotation остаются в change recovery.
@@ -125,5 +125,5 @@ owner-only, Git-ignored profile из локальных private keys; удале
 Это greenfield implementation без миграции существующих устройств. Перед первым
 public-state publish скрипты проверят пустой или ожидаемый root-owned runtime
 tree. Откат незавершённой операции выполняется повторным reconciliation из
-последнего успешно расшифрованного authoritative state; старый Nix generation,
+последнего успешно расшифрованного authoritative state; старый configuration revision,
 backup или ciphertext не используется как доказательство актуальных grants.

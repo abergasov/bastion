@@ -3,7 +3,7 @@
 ## Purpose
 
 Define publicly reachable, key-authenticated administration, account passwords,
-privilege elevation and fail2ban protection for the future NixOS VPN server.
+privilege elevation and fail2ban protection for the Ubuntu VPN server managed by Ansible.
 
 ## Requirements
 
@@ -43,10 +43,10 @@ The secret handling requirements in
 [recovery-and-verification](../recovery-and-verification/spec.md) SHALL apply to
 password provisioning. Password material for both accounts SHALL be stored in Git
 only as SOPS/age ciphertext for the owner and VPS, and provisioned through
-sops-nix protected runtime files during initial installation and recreation.
+protected runtime files provisioned by the Ansible-managed SOPS integration during initial installation and recreation.
 
 #### Scenario: Provision account passwords
-- **WHEN** initial server setup provisions the predefined account passwords from the SOPS/age-encrypted repository state through sops-nix
+- **WHEN** initial server setup provisions the predefined account passwords from the SOPS/age-encrypted repository state through the Ansible-managed SOPS integration
 - **THEN** it sets the supplied password for each of `admin` and `root`
 - **AND** SSH continues to accept public-key authentication only
 
@@ -59,14 +59,13 @@ sops-nix protected runtime files during initial installation and recreation.
 
 Bastion SHALL run fail2ban for public SSH and verify actual SSH log matching and
 ban/unban behavior on both IPv4 and IPv6. Bastion SHALL use the default SSH jail
-policy supplied by the selected, pinned NixOS/nixpkgs revision and its fail2ban
-package, without project-specific overrides to failure thresholds, observation
+policy supplied by the selected Ubuntu release and its recorded fail2ban package version, without project-specific overrides to failure thresholds, observation
 windows, ban durations, repeat-offender escalation or exemptions. Enabling SSH
 protection and connecting it to the actual SSH logs and firewall SHALL remain
 required. Implementation SHALL record and verify the effective defaults of the
-selected revision rather than assume fixed numeric values.
+selected package version rather than assume fixed numeric values.
 
 #### Scenario: Enforce the default ban policy
-- **WHEN** SSH failures from an IPv4 or IPv6 address meet the selected revision's default SSH jail policy
+- **WHEN** SSH failures from an IPv4 or IPv6 address meet the selected package version's default SSH jail policy
 - **THEN** fail2ban detects the failures and enforces the default SSH ban
 - **AND** ban removal is verified to restore access under the same policy

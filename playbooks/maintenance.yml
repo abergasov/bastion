@@ -1,0 +1,58 @@
+---
+- name: Apply manual package maintenance
+  hosts: bastion_admin
+  remote_user: admin
+  become: true
+  become_method: ansible.builtin.su
+  gather_facts: true
+  tasks:
+    - name: Create the Bastion maintenance state directory
+      ansible.builtin.file:
+        path: /var/lib/bastion
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Update packages only during this explicit maintenance run
+      block:
+        - name: Upgrade installed packages
+          ansible.builtin.apt:
+            update_cache: true
+            upgrade: dist
+      rescue:
+        - name: Explain recovery after a partial package update
+          ansible.builtin.fail:
+            msg: >-
+              Package maintenance may have partially applied. Keep the current
+              administrative session, inspect apt and dpkg state, recover it,
+              then rerun maintenance before declaring rollout successful.
+      always:
+        - name: Read installed package versions
+          ansible.builtin.command:
+            argv:
+              - dpkg-query
+              - -W
+              - '-f=${binary:Package}\t${Version}\n'
+          register: package_versions
+          changed_when: false
+
+        - name: Record installed package versions
+          ansible.builtin.copy:
+            content: "{{ package_versions.stdout }}"
+            dest: /var/lib/bastion/package-versions.txt
+            owner: root
+            group: root
+            mode: '0600'
+
+    - name: Reapply platform configuration after maintenance
+      ansible.builtin.import_role:
+        name: platform
+
+    - name: Reapply runtime secrets after maintenance
+      ansible.builtin.import_role:
+        name: secrets_administration
+
+    - name: Reapply final administration policy after maintenance
+      ansible.builtin.import_role:
+        name: administration

@@ -20,7 +20,7 @@
 - Обеспечить явный результат частичного сбоя, блокировку и атомарное сохранение
   состояния, а также действенный отзыв в работающем и постоянном состояниях VPN.
 - Добавить целевые проверки выдачи, шифрования, публикации, повторной попытки,
-  экспорта и отзыва через reboot/rebuild/restore.
+  экспорта и отзыва через reboot/reapply/restore.
 
 ## Capabilities
 
@@ -38,7 +38,7 @@
 
 Затрагиваются будущие локальные Make-цели и скрипты управления, владельческое
 age-шифрованное credential state, локальные профили и root-only public runtime
-state VPS. Сквозная интеграция зависит от `implement-nixos-platform`,
-`implement-secrets-and-administration` и `implement-vpn-connectivity`; последний
+state VPS. Сквозная интеграция зависит от `implement-ubuntu-platform`,
+`implement-ubuntu-secrets-administration` и `implement-vpn-connectivity`; последний
 предоставляет потребление public-state и test fixtures. Серверные VPN-ключи и
-sops-nix plumbing принадлежат change секретов и администрирования.
+Ansible-managed SOPS plumbing принадлежат change секретов и администрирования.
