@@ -13,7 +13,8 @@ private key remains a runtime file rather than a tracked `wg-quick` config.
 
 ## Package and OpenVPN parameter review (2026-10-24)
 
-The platform selects Ubuntu Server 26.04 LTS (Resolute), x86_64. Contrary to
+This review used Ubuntu Server 26.04 LTS (Resolute), x86_64; provisioning is
+not restricted to that release. Contrary to
 the task's wording about "pinned Ubuntu packages", `roles/vpn/tasks/main.yml`
 uses package names with `state: present`, without version pins or APT holds.
 The following is a dated upstream reference, not an installed-version report

@@ -133,4 +133,12 @@ below do not independently impose requirements.
 ## Inputs and checks remaining before installation
 
 - Supply concrete public IPv4/IPv6 addresses in local host configuration and verify the source OS's SSH account, installation privileges and host identity for the chosen VPS.
-- Select and verify a supported Ubuntu Server release, compatible Ansible/tool versions, upstream compatibility and performance choices during implementation. These are engineering checks, not pending owner policy decisions.
+- Verify the chosen Ubuntu Server host, compatible Ansible/tool versions, upstream compatibility and performance choices. Record the tested release without imposing a release-number gate. These are engineering checks, not pending owner policy decisions.
+
+## Owner decision — 2026-11-02: no Ubuntu release pin
+
+Require Ubuntu as the distribution, without an exact release, minimum release
+or release allowlist in provisioning checks. The former 26.04 gate is removed.
+Historical VM results and the fixed test image describe tested environments;
+they neither restrict deployment to that release nor prove compatibility with
+all Ubuntu releases. See [server-platform](../specs/server-platform/spec.md).

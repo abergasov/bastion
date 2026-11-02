@@ -27,7 +27,7 @@ evidence для упрощённой роли и не подтверждают �
 Проверки выполнены локально без VPS и без мутаций удалённого хоста:
 
 - `make test`: synthetic SSH preflight отвергает некорректный prefix, чужой
-  Ed25519 host key, не-Ubuntu 26.04 и bootstrap account без root/sudo до любого
+  Ed25519 host key, другой дистрибутив и bootstrap account без root/sudo до любого
   provision marker; static contract не допускает Nix/disko runtime path.
 - Временный `/tmp` venv с `ansible-core 2.21.5`: syntax-check трёх playbook и
   `ansible-lint` production profile прошли.

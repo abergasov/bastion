@@ -132,8 +132,8 @@ def main() -> None:
     if os_release.returncode != 0:
         fail("SSH host identity verification or OS release read failed")
     release = dict(line.split("=", 1) for line in os_release.stdout.splitlines() if "=" in line)
-    if release.get("ID") != "ubuntu" or release.get("VERSION_ID", "").strip('"') != "26.04":
-        fail("target must run Ubuntu 26.04")
+    if release.get("ID", "").strip('"') != "ubuntu":
+        fail("target must run Ubuntu")
     uid = subprocess.run(ssh + ["id -u"], text=True, capture_output=True)
     if uid.returncode == 0 and uid.stdout.strip() == "0":
         return

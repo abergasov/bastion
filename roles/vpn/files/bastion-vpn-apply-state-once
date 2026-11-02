@@ -23,7 +23,6 @@ if test -L "$active"; then
     configure_wireguard=false
   fi
 fi
-install -d -m 0700 /run/lock
 exec 9>"$lock"
 flock -x 9
 test "$(realpath -e /var/lib/bastion/vpn/current)" = "$state"

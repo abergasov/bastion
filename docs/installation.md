@@ -1,6 +1,6 @@
 # Ubuntu foundation
 
-Подготовьте VPS вручную с Ubuntu Server 26.04 LTS, публичными IPv4 и IPv6 и
+Подготовьте VPS вручную с Ubuntu Server, публичными IPv4 и IPv6 и
 публичным Ed25519 ключом владельца. Скопируйте
 `inventory/hosts.ini.example` в игнорируемый `inventory/hosts.ini`, а
 `inventory/known_hosts.example` — в игнорируемый `inventory/known_hosts`.
@@ -26,8 +26,12 @@ Vault только на controller для проверки schema; failure stops
 contacts a host. Password and ciphertext never become VPS material.
 
 `make bootstrap` — единственный initial path: его preflight до Ansible проверяет
-входы, pinned SSH identity, Ubuntu 26.04 и root либо non-interactive sudo. Он не
+входы, pinned SSH identity, дистрибутив Ubuntu и root либо non-interactive sudo. Он не
 форматирует диски, не заменяет ОС и не использует provider API.
+
+Конкретная версия Ubuntu не требуется. Упоминания 26.04 в результатах проверок
+описывают использованный стенд; совместимость пакетов и служб на выбранном
+релизе проверяется отдельно.
 
 Make передаёт один и тот же strict SSH option set одновременно в
 `--ssh-common-args` и JSON extra variable `ansible_ssh_common_args`. Это нужно
@@ -49,8 +53,9 @@ VPN, VPN firewall, ssh_notify и device lifecycle остаются в changes 3�
 
 ## Проверенные источники
 
-Ubuntu публикует [26.04 LTS](https://documentation.ubuntu.com/release-notes/26.04/)
-как LTS до апреля 2031; применён x86_64 Server baseline. Automation закреплена
+Для ранее проведённых проверок выбран Ubuntu Server x86_64
+[26.04 LTS](https://documentation.ubuntu.com/release-notes/26.04/).
+Это версия проверенного стенда, а не ограничение установки. Automation закреплена
 на `ansible-core==2.21.5`; [матрица Ansible](https://docs.ansible.com/projects/ansible-core/devel/reference_appendices/release_and_maintenance.html)
 указывает Python 3.12–3.14 на control node и Python 3.9–3.14 на target для 2.21.
 Помимо `ansible-core`, firewall role требует закреплённую Galaxy collection

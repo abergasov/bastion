@@ -128,7 +128,7 @@ validate_key() {
   }
 }
 
-install -d -m 0700 "$releases" /run/lock
+install -d -m 0700 "$releases"
 # Verification takes its own shared lock, so do it before acquiring the writer lock.
 verified=$(/usr/local/libexec/bastion-vpn-verify-state --allow-expired)
 exec 9>"$lock"

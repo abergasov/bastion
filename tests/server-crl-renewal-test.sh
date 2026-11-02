@@ -5,7 +5,7 @@ root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmp_dir=$(mktemp -d /tmp/bastion-server-crl.XXXXXX)
 trap 'rm -rf "$tmp_dir"' EXIT
 state_root=$tmp_dir/state runtime_root=$tmp_dir/runtime libexec=$tmp_dir/libexec bin=$tmp_dir/bin
-mkdir -p "$state_root/releases" "$runtime_root" "$libexec" "$bin"
+mkdir -p "$state_root/releases" "$runtime_root" "$libexec" "$bin" "$tmp_dir/lock"
 chmod 0700 "$state_root" "$runtime_root"
 
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$runtime_root/openvpn-ca-key" >/dev/null 2>&1

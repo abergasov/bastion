@@ -88,25 +88,11 @@
     mode: '0644'
   notify: Restart Bastion secrets
 
-- name: Require secrets before SSH starts
+# sshd reads no runtime secret; a hard dependency would stop SSH whenever activation fails.
+- name: Remove the obsolete SSH dependency on runtime secrets
   ansible.builtin.file:
-    path: /etc/systemd/system/ssh.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-
-- name: Require secrets before SSH starts
-  ansible.builtin.copy:
-    dest: /etc/systemd/system/ssh.service.d/bastion-secrets.conf
-    content: |
-      [Unit]
-      Requires=bastion-secrets.service
-      After=bastion-secrets.service
-    owner: root
-    group: root
-    mode: '0644'
-  notify: Restart Bastion secrets
+    path: /etc/systemd/system/ssh.service.d/bastion-secrets.conf
+    state: absent
 
 - name: Enable and start runtime secrets
   ansible.builtin.systemd_service:

@@ -9,6 +9,8 @@ test -d openspec/changes/archive
 rg -qx 'host_key_checking = True' ansible.cfg
 rg -q 'GlobalKnownHostsFile=/dev/null' Makefile scripts/preflight-bastion
 rg -q 'StrictHostKeyChecking=yes' Makefile scripts/preflight-bastion
+rg -q "ansible_distribution == 'Ubuntu'" roles/platform/tasks/main.yml
+! rg -n 'ansible_distribution_(version|major_version|release)' roles/platform/tasks/main.yml
 rg -q 'MaxRetentionSec=30day' roles/platform/tasks/main.yml
 rg -U -q 'path: /var/log/journal\n    state: directory\n    owner: root\n    group: systemd-journal\n    mode: '\''2755'\''\n  notify: Restart journald' roles/platform/tasks/main.yml
 rg -q 'rotate 30' roles/platform/tasks/main.yml

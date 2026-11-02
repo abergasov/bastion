@@ -1,10 +1,9 @@
 ---
-- name: Require Ubuntu 26.04
+- name: Require Ubuntu
   ansible.builtin.assert:
     that:
       - ansible_distribution == 'Ubuntu'
-      - ansible_distribution_version == '26.04'
-    fail_msg: Bastion supports Ubuntu Server 26.04 only.
+    fail_msg: Bastion requires Ubuntu Server.
 
 - name: Keep rsyslog available for the authentication log
   ansible.builtin.apt:

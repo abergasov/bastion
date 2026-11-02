@@ -11,7 +11,7 @@ case "$archive" in /home/admin/.bastion-vpn-release-????????????????????????????
   echo 'publisher refused unsafe archive path' >&2; exit 1 ;;
 esac
 test -f "$archive"
-install -d -m 0700 "$releases" /run/lock
+install -d -m 0700 "$releases"
 
 # Verification owns a shared lock, so snapshot before taking the writer lock.
 old_state=

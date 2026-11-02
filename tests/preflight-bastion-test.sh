@@ -17,7 +17,11 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$SSH_CALLS"
 case "${10}" in
   'cat /etc/os-release')
-    if [ "${CASE}" = unsupported_os ]; then printf 'ID=debian\nVERSION_ID="12"\n'; else printf 'ID=ubuntu\nVERSION_ID="26.04"\n'; fi ;;
+    if [ "${CASE}" = unsupported_os ]; then
+      printf 'ID=debian\nVERSION_ID="12"\n'
+    else
+      printf 'ID=%s\nVERSION_ID="%s"\n' "${OS_ID:-ubuntu}" "${UBUNTU_VERSION:-26.04}"
+    fi ;;
   'id -u')
     [ "${CASE}" = insufficient_privileges ] && printf '1000\n' || printf '0\n' ;;
   'sudo -n true') [ "${CASE}" != insufficient_privileges ] ;;
@@ -63,6 +67,11 @@ run_failure unsupported_os
 write_inventory
 run_failure insufficient_privileges
 [ "$(wc -l < "$tmp_dir/calls")" = 3 ]
+
+write_inventory
+: > "$tmp_dir/calls"
+PATH="$fake_bin:$PATH" SSH_CALLS="$tmp_dir/calls" CASE=ubuntu_release OS_ID='"ubuntu"' UBUNTU_VERSION=24.04 "$root_dir/scripts/preflight-bastion" "$tmp_dir/hosts.ini" "$tmp_dir/known_hosts"
+[ "$(wc -l < "$tmp_dir/calls")" = 2 ]
 
 write_inventory
 sed -i 's/ipv4_gateway=8.8.8.1/ipv4_gateway=192.0.2.1/' "$tmp_dir/hosts.ini"

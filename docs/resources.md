@@ -11,7 +11,8 @@
 | Swap | отсутствует |
 | Непроверенные ограничения провайдера | public addressing, план/лимиты и live egress не проверены |
 
-Целевой foundation — Ubuntu Server 26.04 LTS с Ansible. Ubuntu публикует минимум
+Проверенный fixture — Ubuntu Server 26.04 LTS с Ansible; установка не привязана
+к этому релизу. Ubuntu публикует минимум
 1.5 GB RAM и 5 GB storage для Server; это не заменяет проверку Bastion на цели
 1 vCPU / 2 GB / 20 GB. Initial/repeated apply, reboot и explicit package update
 прошли в fixture; VPN throughput, provider networking и live-проверки остаются
