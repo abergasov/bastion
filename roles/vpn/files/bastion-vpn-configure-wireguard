@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state=${1:?validated state path is required}
+interface=wg-bastion
+key=/run/secrets/bastion/wireguard-server-key
+peers=$state/wireguard/peers
+
+test -r "$key"
+# Read the root-only source in this hook; wg receives an anonymous fd instead
+# of a pathname below the runtime-secret directory.
+exec {key_fd}< "$key"
+private_key=''
+if ! IFS= read -r private_key <&"$key_fd"; then
+  test -n "$private_key"
+fi
+! IFS= read -r _ <&"$key_fd"
+exec {key_fd}<&-
+[[ "$private_key" =~ ^[A-Za-z0-9+/]{43}=$ ]]
+/usr/sbin/modprobe wireguard
+ip link show dev "$interface" >/dev/null 2>&1 || ip link add dev "$interface" type wireguard
+ip address replace 10.43.0.1/24 dev "$interface"
+ip -6 address replace fd42:2::1/64 dev "$interface"
+while read -r peer; do
+  test -z "$peer" || wg set "$interface" peer "$peer" remove
+done < <(wg show "$interface" peers)
+wg set "$interface" listen-port 443 private-key <(printf '%s\n' "$private_key")
+while read -r public_key ipv4 ipv6; do
+  test -n "$public_key" || continue
+  wg set "$interface" peer "$public_key" allowed-ips "$ipv4/32,$ipv6/128"
+done < "$peers"
+ip link set up dev "$interface"

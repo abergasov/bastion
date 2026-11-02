@@ -20,3 +20,14 @@
     - platform
     - secrets_administration
     - administration
+    - firewall
+    - ssh_notifications
+    - vpn
+  post_tasks:
+    - name: Finish role handlers before rotating root password
+      ansible.builtin.meta: flush_handlers
+
+    - name: Rotate root password after all routine roles
+      ansible.builtin.import_role:
+        name: administration
+        tasks_from: root-password

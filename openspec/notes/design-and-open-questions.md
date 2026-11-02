@@ -2,6 +2,53 @@
 
 Transferred from AGENTS.md on 2026-10-19. This document is non-normative: proposals are not approved decisions. Where the original discussion repeats a confirmed constraint, the normative requirement lives in [the specifications](../README.md). Resolve choices with the owner before implementing the affected behavior.
 
+## Confirmed decision — 2026-11-01: autonomous CRL renewal on the VPS
+
+The owner identified manual CRL renewal as a specification error and explicitly
+chose the VPS itself to perform automatic signing and activation, independently
+of the administrator's computer. This supersedes the intervening controller-timer
+proposal and the earlier blanket ban on deploying the CA private key.
+
+The controller keeps the authoritative membership/issuance/revocation records
+and local CA copy. The VPS receives a separately protected CA signing key and
+public records needed for renewal; client private keys, the full authority file,
+Vault password and administrator SSH private key remain off the VPS. Renewal
+does not authorize the server to create or change membership.
+
+This expands the compromise boundary: root on the VPS can obtain the CA key and
+sign both certificates and CRLs. Recovery after that exposure requires fresh CA
+trust, explicit device re-enrollment and new profiles; the earlier CA-preserving
+VPS-compromise procedure is superseded for hosts receiving the signing key.
+See [device-lifecycle](../specs/device-lifecycle/spec.md),
+[recovery](../specs/recovery-and-verification/spec.md) and the reopened
+[implementation tasks](../changes/fix-review-findings/tasks.md).
+
+The implementation uses a native systemd timer with daily checks, a seven-day
+renewal window and persistent catch-up; these timings are design defaults, not
+additional owner decisions. The server must serialize renewal with publication,
+retain current revocations across reboot/reapply and reject stale controller
+state. Synthetic regression coverage is recorded in the implementation tasks;
+disposable-VM renewal checks and combined verification remain open as tasks 1.6
+and 2.1. Earlier manual-renewal and CA-preserving recovery tests do not verify
+this behavior. Historical decisions below remain history where superseded.
+
+## Confirmed decision — 2026-11-01: replace the firewall with UFW
+
+The owner chose UFW to replace the current custom Bastion nftables firewall,
+preserving SSH, both VPNs, IPv4/IPv6, NAT, client isolation and fail2ban.
+The owner explicitly chose replacement rather than retaining two independent
+static firewall managers. The existing inbound/outbound policy remains in force;
+the legacy Ansible role's TCP/80 and OpenVPN UDP allowances are not adopted.
+
+The [UFW change](../changes/archive/2026-11-02-replace-firewall-with-ufw/proposal.md)
+is complete and archived; its requirements are merged into
+[vpn-connectivity](../specs/vpn-connectivity/spec.md). All 13 implementation and
+verification tasks are complete, with disposable Ubuntu VM evidence recorded in
+the archived [tasks](../changes/archive/2026-11-02-replace-firewall-with-ufw/tasks.md).
+Subsequent corrections remain tracked in
+[fix-review-findings](../changes/fix-review-findings/tasks.md).
+This local evidence does not establish live readiness or authorize deployment.
+
 ## Confirmed decisions — 2026-10-23: Ubuntu and Ansible
 
 The owner replaces NixOS with ordinary Ubuntu Server configured through Ansible,

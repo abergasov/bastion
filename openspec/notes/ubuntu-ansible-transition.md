@@ -17,10 +17,9 @@ Foundation реализован локально; deployment, Ubuntu VM и live 
 - Сохраняются admin-only SSH с проверкой host key, повышение через `su`, обе VPN
   на TCP/UDP 443, IPv4/IPv6, изоляция пиров, локальная выдача и отзыв, Make-интерфейс,
   уведомления и остальные требования, не зависящие от платформы.
-- SOPS/age, независимые owner/VPS recipients и owner-only CA/client state
-  сохраняются. Ansible управляет доставкой ciphertext и runtime-дешифрованием
-  вместо sops-nix. Использование Ansible Vault в источнике само по себе не
-  меняет согласованную схему хранения Bastion.
+- Controller-side Ansible Vault replaces SOPS/age recipients. Vault password,
+  CA and client private state remain off the VPS; Ansible delivers only required
+  root-owned persistent server files and atomically projects runtime files.
 - Владелец разрешил копировать необходимые секреты из старого проекта. В рамках
   документационной работы они не копировались и не расшифровывались.
 

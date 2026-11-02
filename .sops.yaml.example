@@ -1,3 +1,5 @@
 creation_rules:
   - path_regex: secrets/server\.yaml$
     age: <OWNER_AGE_RECIPIENT>,<VPS_AGE_RECIPIENT>
+  - path_regex: secrets/vpn-server\.yaml$
+    age: <OWNER_AGE_RECIPIENT>,<VPS_AGE_RECIPIENT>

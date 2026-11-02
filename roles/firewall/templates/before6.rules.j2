@@ -1,0 +1,23 @@
+# Managed by Bastion
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s fd42:1::/64 -o {{ netplan_interface }} -j MASQUERADE
+-A POSTROUTING -s fd42:2::/64 -o {{ netplan_interface }} -j MASQUERADE
+COMMIT
+
+*filter
+:ufw6-before-input - [0:0]
+:ufw6-before-output - [0:0]
+:ufw6-before-forward - [0:0]
+-A ufw6-before-input -i lo -j ACCEPT
+-A ufw6-before-output -o lo -j ACCEPT
+-A ufw6-before-input -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A ufw6-before-output -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A ufw6-before-forward -i wg-bastion -o wg-bastion -j DROP
+-A ufw6-before-forward -i tun-openvpn -o tun-openvpn -j DROP
+-A ufw6-before-forward -i wg-bastion -o tun-openvpn -j DROP
+-A ufw6-before-forward -i tun-openvpn -o wg-bastion -j DROP
+-A ufw6-before-forward -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A ufw6-before-input -p ipv6-icmp -m conntrack --ctstate NEW -j ACCEPT
+-A ufw6-before-forward -p ipv6-icmp -m conntrack --ctstate NEW -j ACCEPT
+COMMIT

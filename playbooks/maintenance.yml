@@ -56,3 +56,23 @@
     - name: Reapply final administration policy after maintenance
       ansible.builtin.import_role:
         name: administration
+
+    - name: Reapply firewall configuration after maintenance
+      ansible.builtin.import_role:
+        name: firewall
+
+    - name: Reapply SSH notifications after maintenance
+      ansible.builtin.import_role:
+        name: ssh_notifications
+
+    - name: Reapply VPN configuration after maintenance
+      ansible.builtin.import_role:
+        name: vpn
+
+    - name: Finish role handlers before rotating root password
+      ansible.builtin.meta: flush_handlers
+
+    - name: Rotate root password after all maintenance roles
+      ansible.builtin.import_role:
+        name: administration
+        tasks_from: root-password

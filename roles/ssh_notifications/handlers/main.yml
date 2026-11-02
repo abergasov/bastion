@@ -1,0 +1,6 @@
+---
+- name: Restart ssh notify
+  ansible.builtin.systemd_service:
+    name: ssh-notify.service
+    state: restarted
+    daemon_reload: true

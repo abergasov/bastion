@@ -1,23 +1,31 @@
 # Секреты и административный доступ
 
+Целевая модель после решения о серверном продлении CRL разрешает отдельную
+защищённую копию ключа CA на VPS. Клиентские приватные ключи, полная authority,
+SSH private key администратора и пароль Vault остаются на контроллере.
+Проекция доставляется только как root-owned runtime secret для renewal service;
+ниже описан её текущий контракт.
+Не копируйте весь authority-файл вместо отдельного ключа. После раскрытия
+серверного ключа CA восстановление требует нового CA и профилей.
+
 Скопируйте `inventory/secrets-input.json.example` в игнорируемый
-`inventory/secrets-input.json`. Он содержит только public owner/VPS age
-recipients, public Ed25519 admin key, абсолютный local path к VPS age identity и
-repo-relative path к SOPS ciphertext. `make bootstrap`, `apply` и `maintenance`
-проверяют shape recipients, независимость owner/VPS, permissions `0600` identity,
-recipient metadata и обязательные server secret names до подключения к host.
+`inventory/secrets-input.json`. Он содержит public Ed25519 admin key, абсолютный
+controller-only `vault_password_file` и repo-relative `vault_secrets_file`.
+Пароль Vault используется только на controller; согласованный read-only источник
+`/home/alejandro/go/src/ansible/vault.txt` имеет допустимый mode `0644`.
 
-`secrets/server.yaml` — tracked SOPS ciphertext path in Git, not an ignored
-plaintext input. Ignore only `inventory/secrets-input.json` and local identity
-sources; a real server file must remain encrypted for both declared recipients.
-
-Ciphertext и VPS identity копируются только как `root:root 0600`. Pinned x86_64
-SOPS `v3.13.3` decrypts server inputs at boot/apply into `/run/secrets/bastion`;
-the systemd service clears that directory first and SSH requires successful
-decryption. Runtime paths for later changes are `/run/secrets/bastion/openvpn-server-key`
-and `/run/secrets/bastion/wireguard-server-key`; ssh_notify adds its own complete
-ciphertext and runtime file later. CA, client keys, enrollment and revocation
-state must not be encrypted for the VPS.
+`secrets/server.yaml` — tracked Ansible Vault ciphertext, а не plaintext input.
+`make bootstrap`, `apply` и `maintenance` расшифровывают его только на controller
+и доставляют отдельные required files как `root:root 0600` в
+`/var/lib/bastion/secrets` (каталог `0700`). Boot activation атомарно заменяет
+`/run/secrets/bastion`; Vault password и ciphertext на VPS не попадают. Runtime
+paths remain `/run/secrets/bastion/openvpn-ca-key`,
+`/run/secrets/bastion/openvpn-server-key`,
+`/run/secrets/bastion/wireguard-server-key` and
+`/run/secrets/bastion/ssh-notify.conf`. The CA key is the explicit root-only
+exception used solely by the CRL renewal service; client keys, SSH seeds and the
+full authority remain excluded. Public enrollment/revocation data is deployed
+separately.
 
 Bootstrap creates `admin` and its public key while the provider session remains
 usable. The first `make apply` must establish a fresh `admin` SSH connection and
@@ -28,9 +36,11 @@ login are disabled. Routine automation becomes root through password-authenticat
 without project retry, ban-duration, exemption, backend or firewall-policy overrides.
 
 For approved Vault import, decrypt only in a protected temporary directory outside
-this repository, transfer only required values to SOPS ciphertext, then remove
-the temporary plaintext. Never copy the Vault password, SSH seed/private key, CA
-or client state to the VPS. This remains local preparation, not live rollout.
+this repository, transfer only required values to Ansible Vault ciphertext, then remove
+the temporary plaintext. Never copy the Vault password, SSH seed/private key,
+client private state or the full authority to the VPS. The CA key uses the
+separate protected root-only renewal projection. This remains local preparation,
+not live rollout.
 The synthetic import contract test treats a read-only Vault view as its source,
 selects exactly the four server values into a protected staging file, verifies the
 source hash did not change, and rejects Vault password, SSH seed and owner-only
@@ -38,13 +48,12 @@ material before the staging file can become ciphertext.
 
 ## Проверка реализации
 
-Источники pinned runtime: [SOPS v3.13.3](https://github.com/getsops/sops/releases/tag/v3.13.3)
-и [age v1.3.2](https://github.com/FiloSottile/age/releases/tag/v1.3.2). Runtime
-SOPS checksum проверяется ролью; Ubuntu 26.04 fixture установил `age 1.2.1-1build1`
-и `fail2ban 1.1.0-9`. `ansible-core 2.21.5` использует documented
+Runtime uses Ansible Vault only on the controller; no SOPS or age package is
+required on the VPS. `ansible-core 2.21.5` uses documented
 [su become method](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_privilege_escalation.html).
 
-На disposable Ubuntu 26.04 QEMU TCG VM, без KVM и без доступа к VPS, проверены
+Historical note: the following recipient/age VM evidence predates Vault and is
+not current verification. На disposable Ubuntu 26.04 QEMU TCG VM, без KVM и без доступа к VPS, проверены
 initial apply, repeat apply без изменений, reboot, permissions runtime files,
 owner/VPS decrypt server ciphertext, отказ unrelated recipient и отказ VPS для
 owner-only CA/client fixture. Synthetic corrupt ciphertext очищает runtime и

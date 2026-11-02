@@ -1,0 +1,329 @@
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -14,6 +14,34 @@
+ )
+ 
+ func main() {
++	if len(os.Args) > 1 {
++		switch os.Args[1] {
++		case "boot":
++			if len(os.Args) != 2 {
++				log.Print("usage: ssh_notify boot")
++				os.Exit(2)
++			}
++			if err := internal.LogMessageAndWait("ssh notify server booted", "server: "+conf.ServerName); err != nil {
++				log.Print("notification delivery failed")
++				os.Exit(1)
++			}
++			return
++		case "message":
++			if len(os.Args) != 3 || os.Args[2] == "" {
++				log.Print("usage: ssh_notify message <message>")
++				os.Exit(2)
++			}
++			if err := internal.LogMessageAndWait(os.Args[2]); err != nil {
++				log.Print("notification delivery failed")
++				os.Exit(1)
++			}
++			return
++		default:
++			log.Print("usage: ssh_notify [boot|message <message>]")
++			os.Exit(2)
++		}
++	}
++
+ 	log.Println("App build time:", buildTime)
+ 	log.Println("App build hash:", buildHash)
+ 
+@@ -28,7 +33,6 @@
+ 		log.Print("make sure that the application starts as root")
+ 		return
+ 	}
+-	internal.LogMessage("ssh notify service started", "server: "+conf.ServerName)
+ 	log.Print("Log file ok, start watch", conf.SSHLogFile)
+ 	internal.Tail(conf.SSHLogFile)
+ }
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -46,14 +46,17 @@
+ 	log.Print("Config loaded")
+ 	log.Print("Log file", conf.SSHLogFile)
+ 	log.Print("Server name", conf.ServerName)
+-	log.Print("Telegram chat", conf.TelegramNotifyChat)
+ 	return conf
+ }
+ 
+ func readConf() *map[string]string {
+-	file, err := os.Open("/etc/ssh_notify.conf")
++	configPath := os.Getenv("SSH_NOTIFY_CONFIG")
++	if configPath == "" {
++		configPath = "/etc/ssh_notify.conf"
++	}
++	file, err := os.Open(configPath)
+ 	if err != nil {
+-		log.Print("Can't open internal config file /etc/ssh_notify.conf")
++		log.Print("Can't open internal config file")
+ 		panic(err.Error())
+ 	}
+ 	defer file.Close()
+--- a/internal/config_path_test.go
++++ b/internal/config_path_test.go
+@@ -0,0 +1,19 @@
++package internal
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestReadConfUsesRuntimePath(t *testing.T) {
++	configPath := filepath.Join(t.TempDir(), "ssh-notify.conf")
++	if err := os.WriteFile(configPath, []byte("ServerName = bastion-test\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("SSH_NOTIFY_CONFIG", configPath)
++	config := readConf()
++	if got := (*config)["ServerName"]; got != "bastion-test" {
++		t.Fatalf("ServerName = %q, want bastion-test", got)
++	}
++}
+--- a/internal/logger.go
++++ b/internal/logger.go
+@@ -8,6 +8,7 @@ import (
+ 	"log"
+ 	"net/http"
+ 	"net/url"
++	"os"
+ 	"strings"
+ 	"time"
+ )
+@@ -13,39 +13,76 @@
+ )
+ 
+ const (
+-	notificationTimeout = 10 * time.Second
+-	maxOutboundRequests = 8
++	notificationTimeout     = 10 * time.Second
++	maxOutboundRequests     = 8
++	maxNotificationAttempts = 6
+ )
+ 
+ var (
+-	notificationClient = &http.Client{Timeout: notificationTimeout}
+-	outboundRequests   = make(chan struct{}, maxOutboundRequests)
+-	slackAPIURL        = "https://slack.com/api/chat.postMessage"
+-	telegramAPIURL     = "https://api.telegram.org/bot%s/sendMessage"
++	notificationClient     = &http.Client{Timeout: notificationTimeout}
++	outboundRequests       = make(chan struct{}, maxOutboundRequests)
++	slackAPIURL            = "https://slack.com/api/chat.postMessage"
++	telegramAPIURL         = "https://api.telegram.org/bot%s/sendMessage"
++	notificationRetryDelay = time.Second
+ )
+ 
+ func LogMessage(message string, additionalData ...string) {
++	logMessage(message, false, additionalData...)
++}
++
++func LogMessageAndWait(message string, additionalData ...string) error {
++	return logMessage(message, true, additionalData...)
++}
++
++func logMessage(message string, wait bool, additionalData ...string) error {
+ 	values := []string{message}
+ 	for i := range additionalData {
+ 		values = append(values, additionalData[i])
+ 	}
+ 	messagePrepared := strings.Join(values, "\n")
++	var deliveryErr error
+ 	if conf.TelegramBotToken != "" && conf.TelegramNotifyChat != "" {
+-		sendAsync(func() error { return TelegramMessage(messagePrepared, "html") })
++		if err := deliver(func() error { return TelegramMessage(messagePrepared, "html") }, wait); err != nil {
++			deliveryErr = err
++		}
+ 	}
+ 	if conf.SlackToken != "" && conf.SlackChannel != "" {
+-		sendAsync(func() error { return SlackMessage(messagePrepared) })
++		if err := deliver(func() error { return SlackMessage(messagePrepared) }, wait); err != nil && deliveryErr == nil {
++			deliveryErr = err
++		}
++	}
++	return deliveryErr
++}
++
++func deliver(send func() error, wait bool) error {
++	if wait {
++		return sendWithRetry(send)
+ 	}
++	sendAsync(send)
++	return nil
+ }
+ 
+ func sendAsync(send func() error) {
+ 	outboundRequests <- struct{}{}
+ 	go func() {
+ 		defer func() { <-outboundRequests }()
+-		_ = send()
++		_ = sendWithRetry(send)
+ 	}()
+ }
+ 
++func sendWithRetry(send func() error) error {
++	for attempt := 1; attempt <= maxNotificationAttempts; attempt++ {
++		if err := send(); err == nil {
++			return nil
++		}
++		if attempt < maxNotificationAttempts {
++			time.Sleep(notificationRetryDelay)
++		}
++	}
++	log.Printf("notification delivery exhausted after %d attempts", maxNotificationAttempts)
++	return fmt.Errorf("notification delivery exhausted")
++}
++
+ func SlackMessage(message string) error {
+ 	data := url.Values{}
+ 	data.Set("token", conf.SlackToken)
+@@ -89,7 +126,7 @@ func TelegramMessage(message string, parseMode string) error {
+ 		return logError("TELEGRAM", nil, nil, err)
+ 	}
+ 
+-	apiURL := fmt.Sprintf(telegramAPIURL, conf.TelegramBotToken)
++	apiURL := fmt.Sprintf(telegramAPIURLTemplate(), conf.TelegramBotToken)
+ 	resp, err := notificationClient.Post(apiURL, "application/json", bytes.NewReader(requestBody))
+ 	if err != nil {
+ 		return logError("TELEGRAM", nil, nil, err)
+@@ -106,6 +144,13 @@ func TelegramMessage(message string, parseMode string) error {
+ 	return logError("TELEGRAM", resp, body, fmt.Errorf("unexpected response status %s", resp.Status))
+ }
+ 
++func telegramAPIURLTemplate() string {
++	if apiURL := os.Getenv("SSH_NOTIFY_TELEGRAM_API_URL"); apiURL != "" {
++		return apiURL
++	}
++	return telegramAPIURL
++}
++
+ func logError(method string, resp *http.Response, body []byte, err error) error {
+ 	if err == nil {
+		return nil
+--- a/internal/logger_retry_test.go
++++ b/internal/logger_retry_test.go
+@@ -0,0 +1,81 @@
++package internal
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func useMockTelegram(t *testing.T, handler func(http.ResponseWriter, *http.Request, int32)) *int32 {
++	t.Helper()
++	oldConf, oldClient, oldURL, oldDelay := conf, notificationClient, telegramAPIURL, notificationRetryDelay
++	t.Cleanup(func() {
++		conf, notificationClient, telegramAPIURL, notificationRetryDelay = oldConf, oldClient, oldURL, oldDelay
++	})
++	var attempts int32
++	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
++		atomic.AddInt32(&attempts, 1)
++		handler(writer, request, atomic.LoadInt32(&attempts))
++	}))
++	t.Cleanup(server.Close)
++	conf = &Config{TelegramBotToken: "test-token", TelegramNotifyChat: "test-chat"}
++	notificationClient = server.Client()
++	telegramAPIURL = server.URL + "/bot%s/sendMessage"
++	notificationRetryDelay = 0 * time.Second
++	return &attempts
++}
++
++func TestTelegramDeliverySucceedsImmediately(t *testing.T) {
++	attempts := useMockTelegram(t, func(writer http.ResponseWriter, request *http.Request, attempt int32) {
++		writer.WriteHeader(http.StatusOK)
++	})
++	sendWithRetry(func() error { return TelegramMessage("message", "html") })
++	if got := atomic.LoadInt32(attempts); got != 1 {
++		t.Fatalf("attempts = %d, want 1", got)
++	}
++}
++
++func TestTelegramDeliveryRetries(t *testing.T) {
++	attempts := useMockTelegram(t, func(writer http.ResponseWriter, request *http.Request, attempt int32) {
++		if attempt < 3 {
++			writer.WriteHeader(http.StatusBadGateway)
++			return
++		}
++		writer.WriteHeader(http.StatusOK)
++	})
++	sendWithRetry(func() error { return TelegramMessage("message", "html") })
++	if got := atomic.LoadInt32(attempts); got != 3 {
++		t.Fatalf("attempts = %d, want 3", got)
++	}
++}
++
++func TestTelegramDeliveryStopsAfterSixFailuresAndProcessesNextEvent(t *testing.T) {
++	attempts := useMockTelegram(t, func(writer http.ResponseWriter, request *http.Request, attempt int32) {
++		if attempt <= maxNotificationAttempts {
++			writer.WriteHeader(http.StatusBadGateway)
++			return
++		}
++		writer.WriteHeader(http.StatusOK)
++	})
++	if err := sendWithRetry(func() error { return TelegramMessage("lost event", "html") }); err == nil {
++		t.Fatal("sendWithRetry returned nil after exhausted delivery")
++	}
++	if got := atomic.LoadInt32(attempts); got != maxNotificationAttempts {
++		t.Fatalf("failed event attempts = %d, want %d", got, maxNotificationAttempts)
++	}
++	sendWithRetry(func() error { return TelegramMessage("next event", "html") })
++	if got := atomic.LoadInt32(attempts); got != maxNotificationAttempts+1 {
++		t.Fatalf("attempts after next event = %d, want %d", got, maxNotificationAttempts+1)
++	}
++}
++
++func TestTelegramAPIURLTemplateUsesDefaultAndOverride(t *testing.T) {
++	t.Setenv("SSH_NOTIFY_TELEGRAM_API_URL", "")
++	if got := telegramAPIURLTemplate(); got != "https://api.telegram.org/bot%s/sendMessage" {
++		t.Fatalf("default Telegram URL = %q", got)
++	}
++	t.Setenv("SSH_NOTIFY_TELEGRAM_API_URL", "http://127.0.0.1:8080/bot%s/sendMessage")
++	if got := telegramAPIURLTemplate(); got != "http://127.0.0.1:8080/bot%s/sendMessage" {
++		t.Fatalf("override Telegram URL = %q", got)
++	}
++}
+--- a/internal/reader.go
++++ b/internal/reader.go
+@@ -13,4 +13,4 @@
+ var (
+ 	ipReg     = regexp.MustCompile(`([0-9]{1,3}[\\.]){3}[0-9]{1,3}`)
+-	acceptReg = regexp.MustCompile(`sshd[[0-9]+]:.Accepted`)
++	acceptReg = regexp.MustCompile(`sshd(?:-session)?[[0-9]+]:.Accepted`)
+ )
+--- a/internal/reader_test.go
++++ b/internal/reader_test.go
+@@ -75,4 +75,23 @@ func TestTailUntilRotateProcessesReplacementAfterRotationGap(t *testing.T) {
+ 	if strings.Contains(got, "old from 10.0.0.1") {
+ 		t.Fatalf("startup history was processed: %s", got)
+ 	}
+ }
++
++func TestSearchMatchRecognizesUbuntuSSHDSessionLogEntry(t *testing.T) {
++	oldConf, oldOutput, oldFlags := conf, log.Writer(), log.Flags()
++	defer func() {
++		conf = oldConf
++		log.SetOutput(oldOutput)
++		log.SetFlags(oldFlags)
++	}()
++	conf = &Config{KnownIps: make(map[string]string)}
++	var output bytes.Buffer
++	log.SetOutput(&output)
++	log.SetFlags(0)
++
++	searchMatch("Oct 25 12:34:56 ssh-notifications-vm sshd-session[1160]: Accepted publickey for admin from 10.0.2.2 port 35764 ssh2: ED25519 SHA256:<synthetic>")
++
++	if !strings.Contains(output.String(), "sshd-session[1160]: Accepted publickey for admin") {
++		t.Fatalf("Ubuntu sshd-session record was not processed: %s", output.String())
++	}
++}

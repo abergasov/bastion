@@ -1,0 +1,228 @@
+---
+- name: Install native VPN packages
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - openssl
+      - wireguard-tools
+    state: present
+    update_cache: false
+
+- name: Create root-only VPN directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - /var/lib/bastion
+    - /var/lib/bastion/vpn
+    - /var/lib/bastion/vpn/releases
+    - /etc/openvpn/server
+    - /usr/local/libexec
+    - /etc/systemd/system/openvpn-server@bastion.service.d
+
+- name: Configure IPv4 and IPv6 VPN forwarding
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-bastion-vpn.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Apply VPN sysctl
+
+- name: Validate OpenVPN logging level
+  ansible.builtin.assert:
+    that:
+      - bastion_openvpn_verb | default(3) is integer
+      - bastion_openvpn_verb | default(3) >= 0
+      - bastion_openvpn_verb | default(3) <= 11
+    fail_msg: bastion_openvpn_verb must be an integer from 0 through 11.
+
+- name: Install OpenVPN server configuration
+  ansible.builtin.template:
+    src: bastion.conf.j2
+    dest: /etc/openvpn/server/bastion.conf
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Validate and restart OpenVPN
+
+- name: Install VPN state hooks
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/libexec/{{ item }}"
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - bastion-vpn-verify-state
+    - bastion-vpn-configure-wireguard
+    - bastion-vpn-apply-state-once
+    - bastion-vpn-apply-state
+    - bastion-vpn-publish-state
+    - bastion-vpn-renew-crl
+    - bastion-vpn-cleanup
+    - bastion-vpn-stop
+
+- name: Install VPN systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - bastion-vpn-apply.service
+    - bastion-vpn-renew-crl.service
+    - bastion-vpn-renew-crl-activate.service
+    - bastion-vpn-renew-crl.timer
+  notify: Reload systemd
+
+- name: Enable daily CRL renewal timer
+  ansible.builtin.systemd_service:
+    name: bastion-vpn-renew-crl.timer
+    enabled: true
+    state: started
+
+- name: Create secrets cleanup drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/bastion-secrets.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Clean VPN runtime state when secrets stop
+  ansible.builtin.template:
+    src: bastion-secrets-vpn-cleanup.conf.j2
+    dest: /etc/systemd/system/bastion-secrets.service.d/bastion-vpn-cleanup.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Require runtime secrets before OpenVPN starts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/openvpn-server@bastion.service.d/bastion.conf
+    content: |
+      [Unit]
+      Requires=bastion-secrets.service
+      Requires=bastion-vpn-renew-crl.service
+      After=bastion-secrets.service bastion-vpn-renew-crl.service
+
+      [Service]
+      ExecStartPre=/usr/local/libexec/bastion-vpn-verify-state /run/bastion-vpn/active
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Check whether public VPN state was published
+  ansible.builtin.stat:
+    path: /var/lib/bastion/vpn/current
+  register: vpn_current_state
+
+- name: Verify published VPN state before preserving listeners
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/bastion-vpn-verify-state
+  register: vpn_state_verification
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: >-
+    (vpn_current_state.stat.islnk | default(false)) or
+    (vpn_current_state.stat.exists | default(false))
+
+- name: Check VPN services when public state is absent
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ item }}"
+  loop:
+    - bastion-vpn-apply.service
+    - openvpn-server@bastion.service
+  register: vpn_missing_state_services
+  changed_when: false
+  failed_when: false
+  when: >-
+    not (vpn_current_state.stat.islnk | default(false)) and
+    not (vpn_current_state.stat.exists | default(false))
+
+- name: Check WireGuard interface when public state is absent
+  ansible.builtin.command:
+    argv:
+      - ip
+      - link
+      - show
+      - dev
+      - wg-bastion
+  register: vpn_missing_state_wireguard
+  changed_when: false
+  failed_when: false
+  when: >-
+    not (vpn_current_state.stat.islnk | default(false)) and
+    not (vpn_current_state.stat.exists | default(false))
+
+- name: Stop active VPN listeners when public state is absent
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/bastion-vpn-stop
+  changed_when: true
+  when:
+    - >-
+      not (vpn_current_state.stat.islnk | default(false)) and
+      not (vpn_current_state.stat.exists | default(false))
+    - >-
+      (vpn_missing_state_services.results | selectattr('rc', 'equalto', 0) | list | length > 0) or
+      vpn_missing_state_wireguard.rc == 0
+
+- name: Reject absent public VPN state with active listeners
+  ansible.builtin.fail:
+    msg: Published VPN state is absent; active VPN listeners were stopped.
+  when:
+    - >-
+      not (vpn_current_state.stat.islnk | default(false)) and
+      not (vpn_current_state.stat.exists | default(false))
+    - >-
+      (vpn_missing_state_services.results | selectattr('rc', 'equalto', 0) | list | length > 0) or
+      vpn_missing_state_wireguard.rc == 0
+
+- name: Stop VPN listeners when published state is invalid
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/bastion-vpn-stop
+  changed_when: true
+  when:
+    - >-
+      (vpn_current_state.stat.islnk | default(false)) or
+      (vpn_current_state.stat.exists | default(false))
+    - vpn_state_verification.rc != 0
+
+- name: Reject invalid published VPN state
+  ansible.builtin.fail:
+    msg: Published VPN state is invalid; active VPN listeners were stopped.
+  when:
+    - >-
+      (vpn_current_state.stat.islnk | default(false)) or
+      (vpn_current_state.stat.exists | default(false))
+    - vpn_state_verification.rc != 0
+
+- name: Reapply validated VPN state after secret activation
+  ansible.builtin.systemd_service:
+    name: bastion-vpn-apply.service
+    state: restarted
+  when:
+    - bastion_secrets_changed | default(false)
+    - (vpn_current_state.stat.islnk | default(false)) or
+      (vpn_current_state.stat.exists | default(false))
+    - vpn_state_verification.rc == 0
+
+- name: Apply VPN sysctl before state activation
+  ansible.builtin.meta: flush_handlers

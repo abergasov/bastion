@@ -1,0 +1,23 @@
+# OpenVPN TCP/443; parameter rationale and measurement plan: docs/vpn-connectivity.md.
+port 443
+proto tcp-server
+dev tun-openvpn
+topology subnet
+server 10.42.0.0 255.255.255.0
+server-ipv6 fd42:1::/64
+ca /run/bastion-vpn/active/openvpn/ca.crt
+cert /run/bastion-vpn/active/openvpn/server.crt
+key /run/secrets/bastion/openvpn-server-key
+crl-verify /run/bastion-vpn/active/openvpn/crl.pem
+verify-client-cert require
+remote-cert-tls client
+dh none
+data-ciphers AES-256-GCM:AES-128-GCM
+auth SHA256
+allow-compression no
+persist-key
+persist-tun
+push "redirect-gateway def1 ipv6"
+push "dhcp-option DNS 1.1.1.1"
+push "dhcp-option DNS 8.8.8.8"
+verb {{ bastion_openvpn_verb | default(3) }}

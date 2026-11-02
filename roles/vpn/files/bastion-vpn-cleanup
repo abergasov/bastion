@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+systemctl stop openvpn-server@bastion.service || true
+ip link delete wg-bastion 2>/dev/null || true
+rm -f /run/bastion-vpn/active /run/bastion-vpn/active.next

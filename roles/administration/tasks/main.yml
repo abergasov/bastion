@@ -31,14 +31,6 @@
   no_log: true
   diff: false
 
-- name: Set the stable root password hash
-  ansible.builtin.user:
-    name: root
-    password: "{{ administration_root_password_hash.stdout }}"
-    update_password: always
-  no_log: true
-  diff: false
-
 - name: Create protected admin SSH directory
   ansible.builtin.file:
     path: /home/admin/.ssh
@@ -101,7 +93,7 @@
   ansible.builtin.apt:
     name: fail2ban
     state: present
-    update_cache: false
+    update_cache: true
 
 - name: Enable the packaged SSH jail
   ansible.builtin.copy:

@@ -53,11 +53,12 @@ reboot. Service restart and actual reboot behavior SHALL be tested separately.
 The ssh_notify integration SHALL use a pinned Ansible-delivered artifact and runtime secrets
 instead of an unpinned checkout or Telegram credentials in Make arguments.
 The entire ssh_notify application configuration, including Telegram credentials
-and all other configuration values, SHALL be stored in Git as SOPS/age ciphertext
-using the same owner and VPS recipients as account-password secrets. Deployment
-and recovery SHALL use that encrypted configuration as their source. The Ansible-managed SOPS runtime integration
-SHALL decrypt the complete configuration into a protected runtime file under
-`/run/secrets` for the service to read; plaintext SHALL NOT enter Git, Ansible inventory/templates, logs, diffs, fact caches or command arguments.
+and all other configuration values, SHALL be stored in Git as controller-side Ansible Vault ciphertext.
+Vault password and ciphertext SHALL remain controller-side. Deployment and
+recovery SHALL use that encrypted configuration as their source. Ansible SHALL
+deliver the complete configuration as a root-only persistent server file. The Ansible-managed
+persistent store SHALL atomically project the complete configuration into a protected runtime file under
+`/run/secrets` at boot for the service to read; plaintext SHALL NOT enter Git, Ansible inventory/templates, logs, diffs, fact caches or command arguments.
 No redesign of the existing SSH login notification contents is required.
 Boot/reboot notifications SHALL distinguish actual system boots from service
 restarts as specified above. Notifications SHALL NOT be presented as a
@@ -65,18 +66,20 @@ complete audit trail: delivery uses the bounded retry policy below.
 
 #### Scenario: Build and configure the integration
 - **WHEN** the integration is packaged and configured
-- **THEN** its source revision is fixed and credentials are supplied at runtime
+- **THEN** its source revision is fixed and credentials are supplied from Vault only during controller deployment, for the service to read at runtime
 - **AND** no credentials appear in Make arguments or generated public build artifacts
 
 #### Scenario: Deploy the complete encrypted configuration
 - **WHEN** ssh_notify is deployed from the repository
-- **THEN** the Ansible-managed SOPS runtime integration decrypts the complete application configuration into a protected runtime file read by the service
+- **THEN** the Ansible-managed persistent/runtime integration projects the complete application configuration into a protected runtime file read by the service
 - **AND** all configuration values, including Telegram credentials, come from the encrypted configuration without manual reconstruction
+- **AND** after reboot the service obtains the protected runtime file without a Vault password on the VPS
 
 #### Scenario: Restore notification configuration on a replacement VPS
-- **WHEN** the VPS is recreated and the owner updates the SOPS recipients for the replacement host
+- **WHEN** the VPS is recreated and the owner supplies rotated Vault configuration from the controller
 - **THEN** deployment restores the complete ssh_notify configuration from the encrypted repository state
 - **AND** credentials exposed in a host compromise are rotated before reuse
+- **AND** the replacement has no ability to decrypt Vault ciphertext
 
 ### Requirement: Application-owned notification delivery and retries
 

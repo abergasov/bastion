@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_root=/var/lib/bastion/vpn
+allow_expired=false
+if test "${1:-}" = --allow-expired; then
+  allow_expired=true
+  shift
+fi
+test "$#" -le 1 || { echo 'usage: bastion-vpn-verify-state [--allow-expired] [current]' >&2; exit 2; }
+current=${1:-$state_root/current}
+lock=/run/lock/bastion-vpn-state.lock
+
+install -d -m 0700 /run/lock
+exec 9>"$lock"
+flock -s 9
+
+test -L "$current" || { echo 'VPN state has no current release' >&2; exit 1; }
+state=$(realpath -e "$current")
+case "$state" in "$state_root"/releases/*) ;; *) echo 'VPN state release escapes releases directory' >&2; exit 1 ;; esac
+for path in "$state" "$state/openvpn" "$state/wireguard"; do
+  test -d "$path" || { echo "VPN state lacks $path" >&2; exit 1; }
+done
+if find -P "$state" -xdev \( -type l -o -perm /022 \) -print -quit | grep -q .; then
+  echo 'VPN state contains a symlink or a group/other-writable path' >&2
+  exit 1
+fi
+if find -P "$state" -xdev \( ! -user root -o ! -group root \) -print -quit | grep -q .; then
+  echo 'VPN state is not root-owned' >&2
+  exit 1
+fi
+
+manifest=$state/manifest.sha256
+required='openvpn/ca.crt openvpn/server.crt openvpn/crl.pem openvpn/index.txt openvpn/metadata.json wireguard/peers'
+expected_files=$'READY\nmanifest.sha256\nopenvpn/ca.crt\nopenvpn/crl.pem\nopenvpn/index.txt\nopenvpn/metadata.json\nopenvpn/server.crt\nwireguard/peers'
+test "$(find -P "$state" -xdev -type f -printf '%P\n' | sort)" = "$expected_files" || {
+  echo 'VPN state contains an unsupported file' >&2
+  exit 1
+}
+for path in READY manifest.sha256 $required; do
+  test -f "$state/$path" || { echo "VPN state lacks $path" >&2; exit 1; }
+  [[ "$(stat -c '%a' "$state/$path")" =~ ^[4567][0-7][0-7]$ ]] || {
+    echo "VPN state $path lacks owner read permission" >&2
+    exit 1
+  }
+done
+test "$(cat "$state/READY")" = bastion-vpn-state-v1 || {
+  echo 'VPN state release is not ready' >&2
+  exit 1
+}
+test "$(wc -l < "$manifest")" -eq 6 || { echo 'VPN state manifest is incomplete' >&2; exit 1; }
+while IFS=' ' read -r digest path; do
+  case "$path" in openvpn/ca.crt|openvpn/server.crt|openvpn/crl.pem|openvpn/index.txt|openvpn/metadata.json|wireguard/peers) ;; *) echo 'VPN manifest names an unsupported file' >&2; exit 1 ;; esac
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo 'VPN manifest has an invalid digest' >&2; exit 1; }
+done < "$manifest"
+for path in $required; do
+  grep -q "  $path$" "$manifest" || { echo "VPN manifest lacks $path" >&2; exit 1; }
+done
+(cd "$state" && sha256sum --strict --check manifest.sha256) >/dev/null
+
+openssl verify -purpose sslserver -CAfile "$state/openvpn/ca.crt" "$state/openvpn/server.crt" >/dev/null
+test -r /run/secrets/bastion/openvpn-server-key || {
+  echo 'VPN runtime server key is unavailable' >&2
+  exit 1
+}
+test "$(openssl x509 -in "$state/openvpn/server.crt" -pubkey -noout)" = "$(openssl pkey -in /run/secrets/bastion/openvpn-server-key -pubout)" || {
+  echo 'VPN server certificate does not match its runtime private key' >&2
+  exit 1
+}
+openssl crl -in "$state/openvpn/crl.pem" -noout -verify -CAfile "$state/openvpn/ca.crt" >/dev/null
+next_update=$(openssl crl -in "$state/openvpn/crl.pem" -noout -nextupdate | sed -n 's/^nextUpdate=//p')
+test -n "$next_update"
+next_epoch=$(date -u -d "$next_update" +%s)
+if test "$next_epoch" -le "$(date -u +%s)" && ! "$allow_expired"; then
+  echo 'VPN state has an invalid or expired CRL' >&2
+  exit 1
+fi
+python3 - "$state/openvpn/metadata.json" "$state/openvpn/index.txt" "$state/openvpn/crl.pem" <<'PY'
+import json
+import re
+import subprocess
+import sys
+
+metadata, index, crl = sys.argv[1:]
+try:
+    value = json.load(open(metadata, encoding="utf-8"))
+except (OSError, ValueError) as error:
+    raise SystemExit(f"invalid OpenVPN public metadata: {error}")
+if (set(value) != {"version", "membership_revision", "crl_sequence", "openvpn_clients", "revocations"}
+        or value["version"] != 2 or not isinstance(value["membership_revision"], int)
+        or value["membership_revision"] < 1 or not isinstance(value["crl_sequence"], int)
+        or value["crl_sequence"] < 1 or not isinstance(value["openvpn_clients"], list)
+        or value["openvpn_clients"] != sorted(value["openvpn_clients"])
+        or any(not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name)
+               for name in value["openvpn_clients"]) or not isinstance(value["revocations"], list)):
+    raise SystemExit("invalid OpenVPN public metadata")
+revoked = set()
+for line in open(index, encoding="utf-8"):
+    fields = line.rstrip("\n").split("\t")
+    if len(fields) != 6 or fields[0] not in {"V", "R", "E"} or not re.fullmatch(r"[0-9A-Fa-f]+", fields[3]):
+        raise SystemExit("invalid OpenVPN issuance database")
+    if fields[0] == "R":
+        revoked.add(fields[3].upper().lstrip("0") or "0")
+text = subprocess.check_output(["openssl", "crl", "-in", crl, "-noout", "-text"], text=True)
+listed = {serial.upper().lstrip("0") or "0" for serial in re.findall(r"Serial Number:\s*([0-9A-Fa-f:]+)", text)}
+listed = {serial.replace(":", "") for serial in listed}
+if not revoked <= listed:
+    raise SystemExit("CRL omits a revoked issuance record")
+number = subprocess.check_output(["openssl", "crl", "-in", crl, "-noout", "-crlnumber"], text=True).strip().split("=", 1)[-1]
+try:
+    sequence = int(number.removeprefix("0x"), 16)
+except ValueError:
+    raise SystemExit("CRL lacks a sequence number")
+if sequence != value["crl_sequence"]:
+    raise SystemExit("CRL sequence does not match public metadata")
+PY
+python3 - "$state/wireguard/peers" <<'PY'
+import ipaddress
+import re
+import sys
+
+keys, ipv4, ipv6 = set(), set(), set()
+for line in open(sys.argv[1], encoding="ascii"):
+    fields = line.split()
+    if len(fields) != 3 or not re.fullmatch(r"[A-Za-z0-9+/]{43}=", fields[0]):
+        raise SystemExit("invalid WireGuard public peer record")
+    v4, v6 = ipaddress.ip_address(fields[1]), ipaddress.ip_address(fields[2])
+    if v4 not in ipaddress.ip_network("10.43.0.0/24") or v4 == ipaddress.ip_address("10.43.0.1"):
+        raise SystemExit("WireGuard IPv4 address is outside its peer pool")
+    if v6 not in ipaddress.ip_network("fd42:2::/64") or v6 == ipaddress.ip_address("fd42:2::1"):
+        raise SystemExit("WireGuard IPv6 address is outside its peer pool")
+    if fields[0] in keys or v4 in ipv4 or v6 in ipv6:
+        raise SystemExit("WireGuard peer record is duplicated")
+    keys.add(fields[0]); ipv4.add(v4); ipv6.add(v6)
+PY
+
+test "$(realpath -e "$current")" = "$state" || { echo 'VPN state changed while it was validated' >&2; exit 1; }
+printf '%s\n' "$state"

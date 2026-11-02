@@ -1,5 +1,61 @@
 # Evidence Ubuntu foundation
 
+## Current verification scope
+
+Этапы 1–5 и переход на UFW завершены по локальным планам. Автономное продление
+CRL реализовано и имеет synthetic regression coverage, но его disposable-VM
+проверки и итоговая совместная проверка остаются открытыми:
+[fix-review-findings, 1.6 и 2.1](../openspec/changes/fix-review-findings/tasks.md).
+Результаты ниже относятся к указанным версиям и сценариям; они не закрывают
+эти задачи или [live readiness, 5.1](../openspec/changes/implement-recovery-and-updates/tasks.md).
+
+## UFW status
+
+Текущая UFW-проверка выполняется только на disposable Ubuntu 26.04 QEMU с
+синтетическими ключами и секретами, без VPS и Telegram. Уже сохранены staged
+markers: normal apply и fresh-SSH reboot, post-reboot runtime gate (raw
+dual-stack chains/NAT/fail2ban action), IPv4/IPv6 fail2ban baseline → ban →
+deny → unban, unchanged reapply `ok=77 changed=0`, ingress/peer matrix и
+WireGuard lifecycle recovery; missing-current state корректно дал ожидаемый
+отказ и затем был восстановлен. Текущие логи находятся в защищённом
+`/tmp/bastion-vpn-vm.CHxKSV/` и не являются долговечным артефактом.
+
+После UFW reload отдельный seeded established/related сценарий также прошёл:
+восемь IPv4/IPv6 same/cross-tunnel TCP flows сначала обменялись данными через
+временные точные test-only allow rules, затем эти rules были проверенно удалены
+и established traffic был заблокирован до return allowance. Fresh clean VM suite
+и distinct cross-component recovery suite завершились успешно. Исторические
+nftables-результаты ниже не подтверждают UFW. В synthetic socket transport
+IPv6 NDP потребовал test-only static neighbours; это ограничение стенда, а не
+изменение production policy и не доказательство provider IPv6.
+
+После clean VPN gate recovery был проверен отдельным existing cross-component
+VM suite. Aggregate `recovery-integration-test` намеренно не запускался: он
+повторяет тот же full VPN VM suite; выбранный suite отдельно проверил recovery
+ролей firewall/VPN/secrets/notifications, idempotent reapply и reboot.
+`/tmp/bastion-recovery-cross-final.log` зафиксировал initial `ok=116 changed=63`,
+repeat `ok=109 changed=0`, reboot 103 s и
+`RECOVERY_CROSS_COMPONENT_VM_PASS`. Это также disposable synthetic evidence.
+
+Поздний targeted continuation завершился `RESUME_AFTER_INGRESS_LIVE_PASS`:
+revoked OpenVPN A был denied при активном/reconnected B, reboot занял 98 s,
+а reapply дал `ok=77 changed=1` только из-за fixture-state copy; denial A
+сохранился после reboot. Это reuse защищённого synthetic fixture, не замена
+обязательному fresh clean VM run.
+
+Fresh clean VM suite `/tmp/bastion-vpn-vm.Y1k727/` завершился terminal marker в
+`/tmp/bastion-vpn-clean-final.log`. Он подтвердил четыре pre-migration safety
+gate (invalid interface, stale UFW `changed=0`, injected enable code 42 и fresh
+no-mux SSH failure) с сохранением legacy policy, normal migration, unchanged
+reapply `ok=77 changed=0`, WireGuard lifecycle (stop/failed-start cleanup,
+denied/available traffic и recovery), firewall ingress/peer matrix, UFW reload,
+true seeded isolation восьми flows и revoke/reboot/reapply tail. В tail reapply
+дал `ok=77 changed=1` только из-за fixture-state copy; revoked A остался denied,
+а B active/reconnected. Это local synthetic evidence, не live-VPS evidence.
+
+> Historical note: SOPS/age evidence below predates the Vault migration and is
+> not current Ubuntu/Ansible Vault verification.
+
 Проверки выполнены локально без VPS и без мутаций удалённого хоста:
 
 - `make test`: synthetic SSH preflight отвергает некорректный prefix, чужой
@@ -110,8 +166,64 @@ secrets service и SSH active. VM выключена.
 Playbooks проверялись напрямую с loopback/private fixture inventory; публичный
 адресный контракт `make bootstrap` проверяется отдельными preflight-тестами.
 В этом повторном прогоне не выполнялись live VPS/provider проверки, внешние
-DNS/Internet пробы и `maintenance`/обновление пакетов. VPN, device lifecycle,
-notifications и recovery остаются отдельными незавершёнными этапами.
+DNS/Internet пробы и `maintenance`/обновление пакетов. На дату этого прогона
+VPN, device lifecycle, notifications и recovery ещё не были завершены;
+последующие результаты отражены отдельно ниже и в
+[актуальном плане](../openspec/README.md#implementation-plan).
+
+## Recovery integration gate
+
+`make recovery-integration-test` повторно запускает platform/VPN/SSH static
+contracts и synthetic lifecycle tests; он не запускается из `make test` и не
+объявляет live readiness. Для тяжёлых disposable VM suites используется
+явный `BASTION_RECOVERY_VM=1 make recovery-integration-test`. При отсутствии
+fixture или real-age tools gate печатает `RECOVERY_SKIP`/`PARTIAL`; ошибка
+выбранного suite завершает gate с ошибкой. VM evidence остаётся synthetic и
+не включает VPS, reboot/recreation live host, Telegram или реальные secrets.
+
+## Current local recovery verification — 2026-10-31
+
+Все результаты этого раздела относятся только к disposable QEMU/TCG и
+синтетическим Vault fixtures. `SSH_NOTIFICATIONS_VM_PASS`
+(`/tmp/bastion-ssh-notifications-vm.GnGUuj`) подтвердил initial apply
+`ok=57 changed=40 failed=0`, repeated apply `ok=50 changed=0 failed=0`, fresh
+notification check и reboot с local mock endpoint. Это не отправляло Telegram.
+
+Cross-component initial role run
+`/tmp/bastion-recovery-cross-component.ZYnnCk` потребовал только fixture
+directory-mode correction; COW continuation
+`/tmp/bastion-cross-final-diagnose.Awz873` прошла repeated apply
+`ok=69 changed=0 failed=0`, fresh SSH local mock, reboot четырёх служб
+(secrets, WireGuard, OpenVPN, notifications) и boot-notification mock.
+Это synthetic continuation, а не live server claim.
+
+`make syntax` прошёл для `bootstrap.yml`, `site.yml` и `maintenance.yml` при
+`ANSIBLE_LOCAL_TEMP` и `ANSIBLE_HOME` в `/tmp`; `bash -n` прошёл для VM,
+recovery и WireGuard fixture helpers. `ansible-lint 26.10.1`, установленный
+локально в `/tmp`, прошёл на затронутом
+`roles/administration/tasks/main.yml` (production profile). Полный lint пока
+сообщает ровно пять ранее существующих несвязанных findings: yaml indentation
+в `.serena/project.yml:88` и `var-naming[no-role-prefix]` в
+`roles/secrets_administration/tasks/main.yml:20`, `:33`, `:49` и `:65`.
+Они не скрыты и не исправлялись этим recovery work.
+
+Independent lifecycle VM завершилась `DEVICE_LIFECYCLE_VM_PASS`
+(`/tmp/bastion-device-lifecycle-vm.HjEosN/verification-result.txt`): initial
+apply `ok=44 changed=27 failed=0`, server-replacement `ok=39 changed=3
+failed=0`, compromise-recovery `ok=39 changed=5 failed=0`; add/export/revoke,
+новый fingerprint, retained revocations, rotated root password и graceful
+shutdown прошли.
+
+VPN component initial apply в `/tmp/bastion-vpn-vm.Y0msLO` дал `ok=44
+changed=27 failed=0`, repeated apply — `ok=37 changed=0 failed=0`. После
+узких fixture fixes retained continuation
+`/tmp/bastion-vpn-continuation.yRKOCa` завершилась
+`VPN_VM_CONTINUATION_PASS`: protocol-compatible peer matrix и firewall ingress
+прошли; revoked OpenVPN A fresh denial при активном B и B reconnect прошли до
+reboot, а после actual reboot (67 s) и reapply `ok=37 changed=1 failed=0`
+fresh A denial/B active прошли снова. Это документированная continuation после
+fixture fixes, не один uninterrupted runner. Live VPS, real Telegram и
+пользовательские приложения исключены.
 
 ## Contracts for following changes
 
@@ -122,4 +234,5 @@ notifications и recovery остаются отдельными незаверш
   открывает порты и не меняет provider API или disk layout.
 - `implement-device-lifecycle` владеет issuance/revocation и CA/client secrets.
 - `implement-ssh-notifications` может читать native `/var/log/auth.log`; его
-  retention уже задаётся logrotate на 30 дней, но его integration ещё не создана.
+  retention задаётся logrotate на 30 дней. Его synthetic Vault/QEMU integration
+  с local mock endpoint прошла; live Telegram delivery не проверялась.

@@ -1,0 +1,26 @@
+[Unit]
+Description=Bastion system boot notification
+Requires=bastion-secrets.service
+After=bastion-secrets.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SSH_NOTIFY_CONFIG=/run/secrets/bastion/ssh-notify.conf
+ExecStart=/usr/local/libexec/ssh_notify boot
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+ReadOnlyPaths=/run/secrets/bastion/ssh-notify.conf
+
+[Install]
+WantedBy=multi-user.target

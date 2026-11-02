@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! /usr/local/libexec/bastion-vpn-verify-state >/dev/null; then
+  /usr/local/libexec/bastion-vpn-stop
+  exit 1
+fi
+systemctl enable bastion-vpn-apply.service
+exec systemctl restart bastion-vpn-apply.service

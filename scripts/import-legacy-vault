@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source_vault=${1:-/home/alejandro/go/src/ansible/secret}
+vault_password=${2:-/home/alejandro/go/src/ansible/vault.txt}
+target=${3:-"$root_dir/secrets/server.yaml"}
+
+test -f "$source_vault"
+test -f "$vault_password"
+mkdir -p "$(dirname "$target")"
+temporary=$(mktemp -d /tmp/bastion-vault-import.XXXXXX)
+stage_dir=$(mktemp -d "$(dirname "$target")/.bastion-vault-stage.XXXXXX")
+trap 'rm -rf "$temporary" "$stage_dir"' EXIT
+plaintext="$temporary/server.yaml"
+ciphertext="$stage_dir/server.yaml"
+legacy_plaintext="$temporary/legacy.yaml"
+
+ANSIBLE_LOCAL_TEMP="$temporary/ansible" ansible-vault view \
+  --vault-password-file "$vault_password" "$source_vault" >"$legacy_plaintext"
+/usr/bin/python3 "$root_dir/scripts/build-bastion-server-vault.py" "$legacy_plaintext" "$plaintext"
+ANSIBLE_LOCAL_TEMP="$temporary/ansible" ansible-vault encrypt \
+  --vault-password-file "$vault_password" --output "$ciphertext" "$plaintext" >/dev/null
+chmod 0600 "$ciphertext"
+mv -f "$ciphertext" "$target"

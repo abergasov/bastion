@@ -42,12 +42,15 @@ Setting account passwords SHALL NOT enable SSH password authentication.
 The secret handling requirements in
 [recovery-and-verification](../recovery-and-verification/spec.md) SHALL apply to
 password provisioning. Password material for both accounts SHALL be stored in Git
-only as SOPS/age ciphertext for the owner and VPS, and provisioned through
-protected runtime files provisioned by the Ansible-managed SOPS integration during initial installation and recreation.
+only as controller-side Ansible Vault ciphertext, and provisioned through
+root-owned persistent password-hash files with an atomic protected runtime
+projection during initial installation and recreation. The Vault password SHALL
+remain on the controller; only password hashes SHALL be delivered to the VPS.
 
 #### Scenario: Provision account passwords
-- **WHEN** initial server setup provisions the predefined account passwords from the SOPS/age-encrypted repository state through the Ansible-managed SOPS integration
+- **WHEN** initial server setup provisions the predefined account passwords from controller-side Vault through the protected runtime projection
 - **THEN** it sets the supplied password for each of `admin` and `root`
+- **AND** the controller uses a protected Vault password source and delivers hashes without plaintext in task output or command arguments
 - **AND** SSH continues to accept public-key authentication only
 
 #### Scenario: Obtain root privileges as admin

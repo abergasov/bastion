@@ -36,3 +36,21 @@ rg -U -q '\{\{ netplan_interface \}\}:\n      optional: true\n      dhcp4: false
 rg -q 'nameservers:' roles/platform/templates/99-bastion.yaml.j2
 rg -F -q 'addresses: {{ dns_servers | to_json }}' roles/platform/templates/99-bastion.yaml.j2
 ! rg -n 'upgrade:|state: latest' playbooks/bootstrap.yml playbooks/site.yml roles
+rg -U -q 'name: fail2ban\n    state: present\n    update_cache: true' roles/administration/tasks/main.yml
+! rg -U -q 'name: fail2ban[\s\S]*upgrade:' roles/administration/tasks/main.yml
+
+maintenance_doc=docs/maintenance.md
+test -f "$maintenance_doc"
+rg -q 'weekly maintenance.*critical fix' "$maintenance_doc"
+rg -q '`make syntax`' "$maintenance_doc"
+rg -q '`ansible-lint`' "$maintenance_doc"
+rg -q './tests/platform-static-test.sh' "$maintenance_doc"
+rg -q '`make maintenance`' "$maintenance_doc"
+rg -q 'сохраните.*SSH-сесси' "$maintenance_doc"
+rg -q 'свежая сессия' "$maintenance_doc"
+rg -q 'OpenVPN.*WireGuard' "$maintenance_doc"
+rg -q 'только оператор вручную инициирует reboot' "$maintenance_doc"
+rg -q 'Автоматический reboot не является частью этой процедуры' "$maintenance_doc"
+rg -q 'неудачное.*частично изменить пакеты' "$maintenance_doc"
+rg -q 'Не объявляйте такой запуск успешным' "$maintenance_doc"
+rg -q 'synthetic component checks.*не доказывают доступность live VPS' "$maintenance_doc"

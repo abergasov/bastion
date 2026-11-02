@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+systemctl stop bastion-vpn-apply.service || true
+/usr/local/libexec/bastion-vpn-cleanup

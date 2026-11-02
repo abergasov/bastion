@@ -1,25 +1,5 @@
 ---
-- name: Require the pinned x86_64 SOPS runtime
-  ansible.builtin.assert:
-    that: ansible_architecture == 'x86_64'
-    fail_msg: Bastion SOPS runtime is pinned for x86_64 only.
-
-- name: Install age runtime
-  ansible.builtin.apt:
-    name: age
-    state: present
-    update_cache: true
-
-- name: Install pinned SOPS runtime
-  ansible.builtin.get_url:
-    url: https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
-    dest: /usr/local/bin/sops
-    checksum: sha256:e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
-    owner: root
-    group: root
-    mode: '0755'
-
-- name: Create protected secret source directories
+- name: Create protected persistent server-secret storage
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -27,35 +7,70 @@
     group: root
     mode: '0700'
   loop:
-    - /var/lib/bastion/age
+    - /var/lib/bastion
     - /var/lib/bastion/secrets
     - /usr/local/libexec
 
-- name: Deliver VPS age identity
+- name: Load controller-side Bastion server Vault
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../{{ vault_secrets_file }}"
+    name: bastion_server_vault
+  no_log: true
+
+- name: Check for controller-side VPN server Vault
+  ansible.builtin.set_fact:
+    bastion_vpn_vault_file: "{{ lookup('ansible.builtin.fileglob', playbook_dir ~ '/../secrets/vpn-server.yaml') }}"
+  changed_when: false
+  no_log: true
+
+- name: Load controller-side VPN server Vault
+  ansible.builtin.include_vars:
+    file: "{{ bastion_vpn_vault_file }}"
+    name: bastion_vpn_server_vault
+  no_log: true
+  when: bastion_vpn_vault_file | length > 0
+
+- name: Deliver required persistent server secrets
   ansible.builtin.copy:
-    src: "{{ vps_age_identity_file }}"
-    dest: /var/lib/bastion/age/identity.txt
+    content: "{{ bastion_server_vault[item.source] }}\n"
+    dest: "/var/lib/bastion/secrets/{{ item.destination }}"
     owner: root
     group: root
     mode: '0600'
-    decrypt: false
+  loop:
+    - { source: admin-password-hash, destination: admin-password-hash }
+    - { source: root-password-hash, destination: root-password-hash }
+    - { source: ssh-notify-config, destination: ssh-notify.conf }
   no_log: true
   diff: false
   notify: Restart Bastion secrets
+  register: bastion_required_secret_delivery
 
-- name: Deliver encrypted server secrets
+- name: Deliver persistent VPN server keys when lifecycle state exists
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../{{ sops_secrets_file }}"
-    dest: /var/lib/bastion/secrets/server.yaml
+    content: "{{ bastion_vpn_server_vault[item.source] }}\n"
+    dest: "/var/lib/bastion/secrets/{{ item.destination }}"
     owner: root
     group: root
     mode: '0600'
-    decrypt: false
+  loop:
+    - { source: openvpn-server-key, destination: openvpn-server-key }
+    - { source: openvpn-ca-key, destination: openvpn-ca-key }
+    - { source: wireguard-server-key, destination: wireguard-server-key }
   no_log: true
   diff: false
   notify: Restart Bastion secrets
+  when: bastion_vpn_vault_file | length > 0
+  register: bastion_vpn_secret_delivery
 
-- name: Install runtime secrets decryptor
+- name: Record whether runtime secret activation changed server material
+  ansible.builtin.set_fact:
+    bastion_secrets_changed: >-
+      {{ (bastion_required_secret_delivery.changed | default(false)) or
+         (bastion_vpn_secret_delivery.changed | default(false)) }}
+  no_log: true
+
+- name: Install runtime secrets activator
   ansible.builtin.template:
     src: bastion-decrypt-secrets.sh.j2
     dest: /usr/local/libexec/bastion-decrypt-secrets
@@ -104,3 +119,15 @@
 
 - name: Require refreshed runtime secrets before dependent administration
   ansible.builtin.meta: flush_handlers
+
+- name: Remove obsolete VPS ciphertext and age identity after Vault activation
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/bastion/secrets/server.yaml
+    - /var/lib/bastion/secrets/vpn-server.yaml
+    - /var/lib/bastion/age/identity.txt
+    - /var/lib/bastion/age
+  no_log: true
+  diff: false

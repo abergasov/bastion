@@ -1,8 +1,22 @@
 # Design
 
+> Server CRL renewal decision (2026-11-01): the VPS receives a protected CA
+> signing key. Earlier CA-preserving compromise-recovery decisions and checked
+> tests below apply only to the old controller-only CA boundary. Fresh-CA recovery
+> for the new boundary is implemented with synthetic regression coverage in
+> [fix-review-findings task 1.7](../fix-review-findings/tasks.md). Disposable-VM
+> renewal checks (1.6) and combined verification (2.1) remain open; earlier
+> results do not establish readiness for server-side renewal.
+
+> Historical migration note: SOPS/age/recipient wording below is historical
+> context superseded by `migrate-secrets-to-ansible-vault`.
+
 ## Context
 
-См. [proposal.md](proposal.md). Ubuntu/Ansible implementation и её evidence ещё отсутствуют; исторические NixOS проверки не подтверждают новый baseline. Baseline
+См. [proposal.md](proposal.md) и [tasks.md](tasks.md): реализация и локальные
+Ubuntu/Ansible проверки разделов 1–4 завершены; live readiness ещё не проверена.
+Новая граница доверия CA и оставшиеся проверки отражены в примечании выше.
+Исторические NixOS проверки не подтверждают Ubuntu/Ansible. Baseline
 уже определяет поведение; этот change объединяет результаты platform, secrets,
 VPN, lifecycle и notifications в один путь обновления, восстановления и
 доказательства готовности.
@@ -99,6 +113,10 @@ endpoint, IPv4/IPv6 forwarding, IPv6 preference и IPv4 fallback, оба public 
 notification service restart и actual reboot. Он фиксирует результат, exclusions
 и unrun checks, не объявляя успешный Ansible run доказательством remote reachability. Проверки
 на каждом пользовательском устройстве в checklist не входят.
+
+Конкретный VPN handoff находится в [vpn-live-checklist.md](vpn-live-checklist.md).
+Его пункты запускаются только в этом change после отдельной авторизации и не
+являются evidence до сохранения фактического результата.
 
 Live recreation и compromise exercise остаются отдельными optional destructive
 упражнениями после явной авторизации. Recovery покрывается обязательными VM/

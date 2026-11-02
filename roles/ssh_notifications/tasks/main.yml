@@ -1,0 +1,153 @@
+---
+- name: Install ssh notify build dependencies
+  ansible.builtin.apt:
+    name:
+      - golang-go
+      - patch
+    state: present
+    update_cache: false
+
+- name: Create the ssh notify artifact cache directory
+  ansible.builtin.file:
+    path: /var/cache/bastion
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Download the pinned ssh notify source archive
+  ansible.builtin.get_url:
+    url: "{{ ssh_notifications_artifact_url | default('https://github.com/abergasov/ssh_notify/archive/20d99f5050246dd450fbc57dfe4e44f1ae30e4bb.tar.gz') }}"
+    dest: /var/cache/bastion/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb.tar.gz
+    checksum: sha256:1c87cd8a4e956237bcdd556e55dad16a771923287e543aea4fe215627c639828
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deliver Bastion ssh notify patch to the artifact cache
+  ansible.builtin.copy:
+    src: 0001-bastion-runtime-config-retries-and-boot.patch
+    dest: /var/cache/bastion/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb.patch
+    owner: root
+    group: root
+    mode: '0644'
+  register: ssh_notifications_patch
+
+- name: Remove the ssh notify build when its patch changes
+  # noqa: no-handler — the changed patch must rebuild before this play continues.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    - /usr/local/libexec/ssh_notify
+  when: ssh_notifications_patch.changed
+
+- name: Create the pinned ssh notify source directory
+  ansible.builtin.file:
+    path: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Unpack the pinned ssh notify source
+  ansible.builtin.unarchive:
+    src: /var/cache/bastion/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb.tar.gz
+    dest: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    creates: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb/go.mod
+
+- name: Deliver Bastion ssh notify patch
+  ansible.builtin.copy:
+    src: /var/cache/bastion/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb.patch
+    dest: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb/bastion.patch
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Apply the Bastion ssh notify patch
+  ansible.builtin.command:
+    argv:
+      - patch
+      - --batch
+      - --forward
+      - -p1
+      - -i
+      - bastion.patch
+    chdir: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    creates: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb/internal/logger_retry_test.go
+
+- name: Test the patched ssh notify package
+  ansible.builtin.command:
+    argv:
+      - go
+      - test
+      - ./...
+    chdir: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    creates: /usr/local/libexec/ssh_notify
+
+- name: Build the patched ssh notify binary
+  ansible.builtin.command:
+    argv:
+      - go
+      - build
+      - -trimpath
+      - -o
+      - /usr/local/libexec/ssh_notify
+      - ./cmd
+    chdir: /usr/local/src/ssh_notify-20d99f5050246dd450fbc57dfe4e44f1ae30e4bb
+    creates: /usr/local/libexec/ssh_notify
+  notify: Restart ssh notify
+
+- name: Require the complete ssh notify runtime configuration
+  ansible.builtin.stat:
+    path: /run/secrets/bastion/ssh-notify.conf
+  register: ssh_notifications_runtime_config
+  changed_when: false
+  no_log: true
+
+- name: Require the complete ssh notify runtime configuration
+  ansible.builtin.assert:
+    that:
+      - ssh_notifications_runtime_config.stat.exists
+      - ssh_notifications_runtime_config.stat.isreg
+      - ssh_notifications_runtime_config.stat.pw_name == 'root'
+      - ssh_notifications_runtime_config.stat.gr_name == 'root'
+      - ssh_notifications_runtime_config.stat.mode == '0600'
+    fail_msg: ssh_notify requires the protected runtime configuration from SOPS.
+  no_log: true
+
+- name: Install the ssh notify service
+  ansible.builtin.template:
+    src: ssh-notify.service.j2
+    dest: /etc/systemd/system/ssh-notify.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart ssh notify
+
+- name: Install the system boot notification trigger
+  ansible.builtin.template:
+    src: ssh-notify-boot.service.j2
+    dest: /etc/systemd/system/ssh-notify-boot.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart ssh notify
+
+- name: Enable and start ssh notifications
+  ansible.builtin.systemd_service:
+    name: ssh-notify.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Enable the system boot notification trigger
+  ansible.builtin.systemd_service:
+    name: ssh-notify-boot.service
+    enabled: true
+    daemon_reload: true

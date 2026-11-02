@@ -1,5 +1,8 @@
 # Proposal
 
+> Historical migration note: SOPS/age/recipient wording is superseded by
+> controller-only Ansible Vault and is not a current recovery instruction.
+
 ## Why
 
 Базовые спецификации уже фиксируют ручные обновления, восстановление через

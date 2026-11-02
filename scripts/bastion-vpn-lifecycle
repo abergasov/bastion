@@ -1,0 +1,754 @@
+#!/usr/bin/env python3
+"""Owner-side authority for Bastion's public VPN release format."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CIPHERTEXT = ROOT / "secrets" / "vpn-authority.yaml"
+NAME = re.compile(r"[a-z][a-z0-9-]{0,62}")
+WG_KEY = re.compile(r"[A-Za-z0-9+/]{43}=")
+HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}")
+VERSION = 1
+
+
+class Error(RuntimeError):
+    pass
+
+
+def fail(message: str) -> None:
+    raise Error(message)
+
+
+def run(command: list[str], data: bytes | None = None, environment: dict[str, str] | None = None) -> bytes:
+    try:
+        result = subprocess.run(command, input=data, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, check=False, env=environment)
+    except OSError as error:
+        fail(f"cannot run {command[0]}: {error}")
+    if result.returncode:
+        fail(f"{command[0]} failed")
+    return result.stdout
+
+
+def interactive(command: list[str]) -> None:
+    """Run the `su` hop with the caller's terminal attached."""
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as error:
+        fail(f"cannot run {command[0]}: {error}")
+    if result.returncode:
+        fail(f"{command[0]} failed")
+
+
+def name(value: str) -> str:
+    if not NAME.fullmatch(value):
+        fail("device name must be lowercase letters, digits, and hyphens")
+    return value
+
+
+def host(value: str) -> str:
+    if not value or any(char.isspace() for char in value) or "/" in value:
+        fail("VPN_HOST is not a safe endpoint")
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        if not HOST.fullmatch(value) or ".." in value or value[0] == "." or value[-1] == ".":
+            fail("VPN_HOST is not a safe endpoint")
+        return value.lower()
+
+
+def local_root(value: str | None) -> Path:
+    root = Path(value) if value else Path(os.environ.get(
+        "XDG_STATE_HOME", Path.home() / ".local" / "state")) / "bastion" / "vpn"
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
+    return root.resolve()
+
+
+def secure_file(path: Path, mode: int = 0o600) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    if path.exists() and not path.is_file():
+        fail(f"unsafe path: {path}")
+    if path.exists():
+        os.chmod(path, mode)
+
+
+def vault_password() -> Path:
+    try:
+        value = json.loads((ROOT / "inventory/secrets-input.json").read_text())["vault_password_file"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        fail("cannot read vault_password_file from inventory/secrets-input.json")
+    path = Path(value).expanduser() if isinstance(value, str) else Path()
+    if not path.is_absolute() or not path.is_file():
+        fail("vault_password_file must be an existing absolute regular file")
+    return path
+
+
+def replacement_secrets(value: str) -> tuple[dict, str]:
+    path = Path(value).expanduser().resolve()
+    try:
+        if not path.is_file() or stat.S_IMODE(path.stat().st_mode) != 0o600:
+            fail("replacement secrets file must be an existing mode-0600 file")
+        secrets = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        fail("cannot read replacement secrets file")
+    required = {"admin-password-hash", "root-password-hash", "ssh-notify-config"}
+    if not isinstance(secrets, dict) or set(secrets) != required or any(not isinstance(secrets[key], str) or not secrets[key] for key in required):
+        fail("replacement secrets file is incomplete")
+    payload = json.dumps(secrets, sort_keys=True, separators=(",", ":")).encode()
+    return secrets, hashlib.sha256(payload).hexdigest()
+
+
+@contextmanager
+def lock(root: Path):
+    path = root / "authority.lock"
+    secure_file(path)
+    with path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def validate(state: object) -> dict:
+    if not isinstance(state, dict) or state.get("version") != VERSION:
+        fail("unsupported authority state")
+    host(state.get("endpoint", ""))
+    pki, wg, ovpn = state.get("pki"), state.get("wireguard"), state.get("openvpn")
+    if not isinstance(pki, dict) or not isinstance(wg, dict) or not isinstance(ovpn, dict):
+        fail("authority state is incomplete")
+    revision = state.get("membership_revision", 1)
+    if not isinstance(revision, int) or revision < 1:
+        fail("authority membership revision is invalid")
+    for path in ("ca.key", "ca.crt", "server.key", "server.crt", "crl.pem", "index.txt", "serial", "crlnumber"):
+        if not isinstance(pki.get(path), str):
+            fail("authority PKI state is incomplete")
+    if not WG_KEY.fullmatch(wg.get("server_private", "")) or not WG_KEY.fullmatch(wg.get("server_public", "")):
+        fail("authority WireGuard server keys are invalid")
+    clients = wg.get("clients", {})
+    if not isinstance(clients, dict) or not isinstance(ovpn.get("clients"), dict):
+        fail("authority client records are invalid")
+    keys, ipv4s, ipv6s = set(), set(), set()
+    for device, record in clients.items():
+        name(device)
+        if not isinstance(record, dict) or not WG_KEY.fullmatch(record.get("private", "")) or not WG_KEY.fullmatch(record.get("public", "")):
+            fail("authority WireGuard client is invalid")
+        try:
+            ipv4, ipv6 = ipaddress.ip_address(record["ipv4"]), ipaddress.ip_address(record["ipv6"])
+        except (KeyError, ValueError):
+            fail("authority WireGuard address is invalid")
+        if ipv4 not in ipaddress.ip_network("10.43.0.0/24") or ipv4 == ipaddress.ip_address("10.43.0.1"):
+            fail("WireGuard IPv4 address is outside its peer pool")
+        if ipv6 not in ipaddress.ip_network("fd42:2::/64") or ipv6 == ipaddress.ip_address("fd42:2::1"):
+            fail("WireGuard IPv6 address is outside its peer pool")
+        if record["public"] in keys or ipv4 in ipv4s or ipv6 in ipv6s:
+            fail("duplicated WireGuard public key or address")
+        keys.add(record["public"]); ipv4s.add(ipv4); ipv6s.add(ipv6)
+    for device, record in ovpn["clients"].items():
+        name(device)
+        if not isinstance(record, dict) or not isinstance(record.get("private"), str) or not isinstance(record.get("cert"), str):
+            fail("authority OpenVPN client is invalid")
+    pending = state.get("pending")
+    if pending is not None:
+        if not isinstance(pending, dict) or pending.get("action") not in {"add-wg", "add-open", "revoke-wg", "revoke-open", "renew-open", "replace-server", "recover-fresh"} or not isinstance(pending.get("server_keys_pending"), bool):
+            fail("authority pending operation is invalid")
+        pending_keys = {"action", "device", "server_keys_pending"}
+        if pending["action"] == "recover-fresh":
+            pending_keys.add("replacement_secrets_sha256")
+            if not re.fullmatch(r"[0-9a-f]{64}", pending.get("replacement_secrets_sha256", "")):
+                fail("authority pending operation is invalid")
+        if set(pending) != pending_keys:
+            fail("authority pending operation is invalid")
+    return state
+
+
+def decrypt(ciphertext: Path) -> dict:
+    if not ciphertext.is_file():
+        fail(f"missing encrypted authority state: {ciphertext}")
+    with tempfile.TemporaryDirectory(prefix="bastion-vault-local.") as temporary:
+        try:
+            state = json.loads(run([
+                "ansible-vault", "view", "--vault-password-file", str(vault_password()), str(ciphertext),
+            ], environment=os.environ | {"ANSIBLE_LOCAL_TEMP": temporary}))
+        except json.JSONDecodeError:
+            fail("decrypted authority state is not JSON")
+    return validate(state)
+
+
+def save(state: dict, ciphertext: Path) -> None:
+    validate(state)
+    temporary = stage_vault(ciphertext, state)
+    try:
+        os.replace(temporary, ciphertext)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def save_server_vault(state: dict) -> None:
+    """Create controller-side Vault ciphertext for VPS signing and server keys."""
+    save_vault(ROOT / "secrets" / "vpn-server.yaml", {
+        "openvpn-ca-key": state["pki"]["ca.key"],
+        "openvpn-server-key": state["pki"]["server.key"],
+        "wireguard-server-key": state["wireguard"]["server_private"],
+    })
+
+
+def save_vault(target: Path, values: dict) -> None:
+    temporary = stage_vault(target, values)
+    try:
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def stage_vault(target: Path, values: dict) -> Path:
+    """Write complete ciphertext to a private temporary file before replacement."""
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
+    try:
+        with tempfile.TemporaryDirectory(prefix="bastion-vault-stage.") as directory:
+            plaintext = Path(directory) / "server.json"
+            plaintext.write_bytes(payload)
+            os.chmod(plaintext, 0o600)
+            run([
+                "ansible-vault", "encrypt", "--vault-password-file", str(vault_password()),
+                "--output", str(temporary), str(plaintext),
+            ], environment=os.environ | {"ANSIBLE_LOCAL_TEMP": directory})
+        os.chmod(temporary, 0o600)
+        return temporary
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def save_replacement_vault(state: dict, replacement: dict | None = None) -> None:
+    if replacement is None:
+        try:
+            save_server_vault(state)
+        except (Error, OSError) as error:
+            fail(f"partial failure: authority Vault ciphertext was saved; retry after fixing Vault output: {error}")
+        return
+    staged: list[tuple[Path, Path]] = []
+    try:
+        server = ROOT / "secrets" / "server.yaml"
+        vpn = ROOT / "secrets" / "vpn-server.yaml"
+        staged.append((stage_vault(server, replacement), server))
+        staged.append((stage_vault(vpn, {
+            "openvpn-ca-key": state["pki"]["ca.key"],
+            "openvpn-server-key": state["pki"]["server.key"],
+            "wireguard-server-key": state["wireguard"]["server_private"],
+        }), vpn))
+        for temporary, target in staged:
+            os.replace(temporary, target)
+    except (Error, OSError) as error:
+        fail(f"partial failure: authority Vault ciphertext was saved; retry after fixing Vault output: {error}")
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
+
+
+def pki_dir(state: dict, directory: Path) -> None:
+    for filename, content in state["pki"].items():
+        path = directory / filename
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.write_text(content)
+        os.chmod(path, 0o600)
+    (directory / "newcerts").mkdir(mode=0o700, exist_ok=True)
+
+
+def capture_pki(state: dict, directory: Path) -> None:
+    state["pki"] = {str(path.relative_to(directory)): path.read_text()
+                    for path in directory.rglob("*") if path.is_file() and path.name != "openssl.cnf"}
+
+
+def config(directory: Path) -> Path:
+    path = directory / "openssl.cnf"
+    path.write_text(f"""[ ca ]
+default_ca = CA_default
+[ CA_default ]
+dir = {directory}
+database = $dir/index.txt
+new_certs_dir = $dir/newcerts
+certificate = $dir/ca.crt
+private_key = $dir/ca.key
+serial = $dir/serial
+crlnumber = $dir/crlnumber
+default_md = sha256
+default_days = 825
+default_crl_days = 30
+policy = policy_any
+copy_extensions = none
+unique_subject = no
+[ policy_any ]
+commonName = supplied
+[ server_cert ]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+[ client_cert ]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+""")
+    return path
+
+
+def wg_pair() -> tuple[str, str]:
+    private = run(["wg", "genkey"]).decode().strip()
+    public = run(["wg", "pubkey"], (private + "\n").encode()).decode().strip()
+    if not WG_KEY.fullmatch(private) or not WG_KEY.fullmatch(public):
+        fail("wg returned an invalid key")
+    return private, public
+
+
+def issue_server(directory: Path) -> None:
+    openssl = config(directory)
+    private, csr = directory / "server.key", directory / "server.csr"
+    run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private)])
+    run(["openssl", "req", "-new", "-key", str(private), "-out", str(csr), "-subj", "/CN=bastion-server"])
+    run(["openssl", "ca", "-batch", "-config", str(openssl), "-extensions", "server_cert", "-in", str(csr), "-out", str(directory / "server.crt")])
+    run(["openssl", "ca", "-config", str(openssl), "-gencrl", "-out", str(directory / "crl.pem")])
+    csr.unlink()
+
+
+def initial(endpoint: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary)
+        (directory / "newcerts").mkdir(mode=0o700)
+        (directory / "index.txt").write_text("")
+        (directory / "serial").write_text("1000\n")
+        (directory / "crlnumber").write_text("1000\n")
+        run(["openssl", "req", "-x509", "-new", "-nodes", "-newkey", "rsa:3072",
+             "-keyout", str(directory / "ca.key"), "-out", str(directory / "ca.crt"),
+             "-days", "3650", "-sha256", "-subj", "/CN=Bastion VPN CA"])
+        issue_server(directory)
+        state = {"version": VERSION, "endpoint": endpoint, "membership_revision": 1, "pki": {}, "wireguard": {"clients": {}},
+                 "openvpn": {"clients": {}}, "revocations": []}
+        capture_pki(state, directory)
+        state["wireguard"]["server_private"], state["wireguard"]["server_public"] = wg_pair()
+        return state
+
+
+def addresses(state: dict) -> tuple[str, str]:
+    used = {record["ipv4"] for record in state["wireguard"]["clients"].values()}
+    for number in range(2, 255):
+        ipv4 = f"10.43.0.{number}"
+        if ipv4 not in used:
+            return ipv4, f"fd42:2::{number}"
+    fail("WireGuard peer pool is exhausted")
+
+
+def add_wg(state: dict, device: str) -> None:
+    device = name(device)
+    clients = state["wireguard"]["clients"]
+    if device in clients:
+        fail("WireGuard device already exists; its private key was preserved")
+    private, public = wg_pair()
+    ipv4, ipv6 = addresses(state)
+    clients[device] = {"private": private, "public": public, "ipv4": ipv4, "ipv6": ipv6}
+
+
+def add_open(state: dict, device: str) -> None:
+    device = name(device)
+    clients = state["openvpn"]["clients"]
+    if device in clients:
+        fail("OpenVPN device already exists; its private key was preserved")
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary); pki_dir(state, directory); openssl = config(directory)
+        private, csr, certificate = directory / "client.key", directory / "client.csr", directory / "client.crt"
+        run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private)])
+        run(["openssl", "req", "-new", "-key", str(private), "-out", str(csr), "-subj", f"/CN={device}"])
+        run(["openssl", "ca", "-batch", "-config", str(openssl), "-extensions", "client_cert", "-in", str(csr), "-out", str(certificate)])
+        clients[device] = {"private": private.read_text(), "cert": certificate.read_text()}
+        private.unlink(); csr.unlink(); certificate.unlink()
+        capture_pki(state, directory)
+
+
+def revoke_open(state: dict, device: str) -> None:
+    record = state["openvpn"]["clients"].get(device)
+    if not record:
+        fail("unknown OpenVPN device")
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary); pki_dir(state, directory); openssl = config(directory)
+        certificate = directory / "revoke.crt"; certificate.write_text(record["cert"])
+        run(["openssl", "ca", "-config", str(openssl), "-revoke", str(certificate)])
+        run(["openssl", "ca", "-config", str(openssl), "-gencrl", "-out", str(directory / "crl.pem")])
+        capture_pki(state, directory)
+    del state["openvpn"]["clients"][device]
+    state["revocations"].append({"protocol": "openvpn", "name": device})
+
+
+def renew_open_crl(state: dict) -> None:
+    """Re-sign the current CA database without changing any identity."""
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary)
+        pki_dir(state, directory)
+        run(["openssl", "ca", "-config", str(config(directory)), "-gencrl", "-out", str(directory / "crl.pem")])
+        capture_pki(state, directory)
+
+
+def openvpn_profile(state: dict, record: dict) -> str:
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-cert.") as temporary:
+        certificate = Path(temporary) / "server.crt"; certificate.write_text(state["pki"]["server.crt"])
+        fingerprint = run(["openssl", "x509", "-in", str(certificate), "-noout", "-fingerprint", "-sha256"]).decode().strip().split("=", 1)[-1]
+    if not re.fullmatch(r"[0-9A-F:]{95}", fingerprint):
+        fail("cannot derive current OpenVPN server fingerprint")
+    return f"""client
+dev tun
+proto tcp-client
+remote {state['endpoint']} 443
+redirect-gateway def1 ipv6
+dhcp-option DNS 1.1.1.1
+dhcp-option DNS 8.8.8.8
+remote-cert-tls server
+peer-fingerprint {fingerprint}
+<ca>
+{state['pki']['ca.crt'].strip()}
+</ca>
+<cert>
+{record['cert'].strip()}
+</cert>
+<key>
+{record['private'].strip()}
+</key>
+"""
+
+
+def replace_server(state: dict) -> None:
+    """Explicit server rotation retains the CA, clients, and revocation database."""
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary)
+        pki_dir(state, directory)
+        for filename in ("server.key", "server.crt", "crl.pem"):
+            (directory / filename).unlink(missing_ok=True)
+        issue_server(directory)
+        capture_pki(state, directory)
+    state["wireguard"]["server_private"], state["wireguard"]["server_public"] = wg_pair()
+
+
+def membership_revision(state: dict) -> int:
+    """Make old authority ciphertexts acquire the first canonical revision."""
+    return state.setdefault("membership_revision", 1)
+
+
+def advance_membership_revision(state: dict) -> None:
+    state["membership_revision"] = membership_revision(state) + 1
+
+
+def crl_sequence(contents: str) -> int:
+    with tempfile.TemporaryDirectory(prefix="bastion-crl-number.") as temporary:
+        crl = Path(temporary) / "crl.pem"
+        crl.write_text(contents)
+        output = run(["openssl", "crl", "-in", str(crl), "-noout", "-crlnumber"]).decode().strip()
+    value = output.split("=", 1)[-1].removeprefix("0x")
+    try:
+        return int(value, 16)
+    except ValueError:
+        fail("OpenVPN CRL lacks a sequence number")
+
+
+def release(state: dict, target: Path) -> None:
+    target.mkdir(mode=0o700)
+    openvpn, wireguard = target / "openvpn", target / "wireguard"
+    openvpn.mkdir(mode=0o700); wireguard.mkdir(mode=0o700)
+    for source, destination in (("ca.crt", "ca.crt"), ("server.crt", "server.crt"), ("crl.pem", "crl.pem")):
+        (openvpn / destination).write_text(state["pki"][source])
+    (openvpn / "index.txt").write_text(state["pki"]["index.txt"])
+    metadata = {"version": 2, "membership_revision": membership_revision(state),
+                "crl_sequence": crl_sequence(state["pki"]["crl.pem"]),
+                "openvpn_clients": sorted(state["openvpn"]["clients"]), "revocations": state["revocations"]}
+    (openvpn / "metadata.json").write_text(json.dumps(metadata, sort_keys=True) + "\n")
+    peers = [f"{r['public']} {r['ipv4']} {r['ipv6']}" for _, r in sorted(state["wireguard"]["clients"].items())]
+    (wireguard / "peers").write_text("\n".join(peers) + ("\n" if peers else ""))
+    paths = ["openvpn/ca.crt", "openvpn/crl.pem", "openvpn/index.txt", "openvpn/metadata.json", "openvpn/server.crt", "wireguard/peers"]
+    (target / "manifest.sha256").write_text("".join(
+        f"{hashlib.sha256((target / item).read_bytes()).hexdigest()}  {item}\n" for item in paths))
+    (target / "READY").write_text("bastion-vpn-state-v1\n")
+    for path in target.rglob("*"):
+        os.chmod(path, 0o700 if path.is_dir() else 0o600)
+
+
+def write_profile(path: Path, content: str) -> Path:
+    secure_file(path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(content)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+    return path
+
+
+def export_wg(state: dict, root: Path, device: str) -> Path:
+    record = state["wireguard"]["clients"].get(name(device))
+    if not record:
+        fail("unknown WireGuard device")
+    endpoint_value = f"[{state['endpoint']}]:443" if ":" in state["endpoint"] else f"{state['endpoint']}:443"
+    return write_profile(root / "profiles" / f"{device}.conf", f"""[Interface]
+PrivateKey = {record['private']}
+Address = {record['ipv4']}/32, {record['ipv6']}/128
+DNS = 1.1.1.1, 8.8.8.8
+
+[Peer]
+PublicKey = {state['wireguard']['server_public']}
+Endpoint = {endpoint_value}
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+""")
+
+
+def export_open(state: dict, root: Path, device: str) -> Path:
+    record = state["openvpn"]["clients"].get(name(device))
+    if not record or not record.get("private") or not record.get("cert"):
+        fail("OpenVPN client credentials are unavailable; refusing to create a profile")
+    if not state["pki"].get("server.crt"):
+        fail("current OpenVPN server certificate is unavailable")
+    return write_profile(root / "profiles" / f"{device}.ovpn", openvpn_profile(state, record))
+
+
+def publish(state: dict, vpn_host: str) -> None:
+    vpn_host = host(vpn_host)
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-release.") as temporary:
+        temporary_path = Path(temporary); tree, archive = temporary_path / "release", temporary_path / "release.tar"
+        release(state, tree)
+        with tarfile.open(archive, "w") as output:
+            output.add(tree, arcname="release")
+        remote = f"/home/admin/.bastion-vpn-release-{uuid.uuid4().hex}.tar"
+        options = ["-o", "GlobalKnownHostsFile=/dev/null", "-o", f"UserKnownHostsFile={ROOT / 'inventory/known_hosts'}", "-o", "StrictHostKeyChecking=yes"]
+        run(["scp", *options, str(archive), f"admin@{vpn_host}:{remote}"])
+        try:
+            remote_command = "su -c " + shlex.quote("/usr/local/libexec/bastion-vpn-publish-state " + shlex.quote(remote))
+            interactive(["ssh", "-tt", *options, f"admin@{vpn_host}", remote_command])
+        finally:
+            subprocess.run(["ssh", *options, f"admin@{vpn_host}", "rm", "-f", remote],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def renew_remote(vpn_host: str) -> None:
+    """Ask the VPS to renew; the controller never signs or transfers a CA key."""
+    options = ["-o", "GlobalKnownHostsFile=/dev/null", "-o", f"UserKnownHostsFile={ROOT / 'inventory/known_hosts'}", "-o", "StrictHostKeyChecking=yes"]
+    command = "su -c " + shlex.quote("/usr/local/libexec/bastion-vpn-renew-crl --activate")
+    interactive(["ssh", "-tt", *options, f"admin@{vpn_host}", command])
+
+
+def stage_publish(state: dict, vpn_host: str) -> None:
+    """Let the publisher stage new public state before applying its matching key."""
+    try:
+        publish(state, vpn_host)
+    except Error:
+        pass
+
+
+def chosen(state: dict, protocol: str) -> str:
+    records = state["wireguard"]["clients"] if protocol == "wg" else state["openvpn"]["clients"]
+    print("\n".join(sorted(records)))
+    try:
+        device = input("Exact device name to revoke (empty cancels): ")
+    except EOFError:
+        fail("revocation cancelled: no input")
+    if not device:
+        fail("revocation cancelled")
+    name(device)
+    if device not in records:
+        fail("unknown device; state unchanged")
+    return device
+
+
+def retry_choice(expected: str) -> str:
+    try:
+        device = input("Exact pending device name to reconcile (empty cancels): ")
+    except EOFError:
+        fail("reconciliation cancelled: no input")
+    if device != expected:
+        fail("pending device name does not match; state unchanged")
+    return device
+
+
+def fresh_recovery_marker(root: Path) -> Path:
+    return root / "recover-fresh.pending"
+
+
+def current_authority_marker(root: Path) -> Path:
+    return root / "current-authority"
+
+
+def authority_digest(ciphertext: Path) -> str:
+    return hashlib.sha256(ciphertext.read_bytes()).hexdigest()
+
+
+def save_current_authority(root: Path, ciphertext: Path) -> None:
+    write_profile(current_authority_marker(root), json.dumps({
+        "ciphertext": str(ciphertext),
+        "sha256": authority_digest(ciphertext),
+    }, sort_keys=True))
+
+
+def current_authority(root: Path, ciphertext: Path) -> bool:
+    try:
+        saved = json.loads(current_authority_marker(root).read_text())
+        return (isinstance(saved, dict) and set(saved) == {"ciphertext", "sha256"}
+                and saved["ciphertext"] == str(ciphertext)
+                and saved["sha256"] == authority_digest(ciphertext))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def fresh_recovery_retry(root: Path, ciphertext: Path) -> bool:
+    """Only resume the exact fresh ciphertext created in this local transaction."""
+    if not ciphertext.exists():
+        return False
+    marker = fresh_recovery_marker(root)
+    try:
+        saved = json.loads(marker.read_text())
+        matches = (isinstance(saved, dict) and set(saved) == {"ciphertext", "sha256"}
+                   and saved["ciphertext"] == str(ciphertext)
+                   and saved["sha256"] == authority_digest(ciphertext))
+    except (OSError, json.JSONDecodeError):
+        matches = False
+    if not matches:
+        fail("fresh recovery refuses an existing encrypted authority state")
+    return True
+
+
+def save_fresh_recovery_marker(root: Path, ciphertext: Path) -> None:
+    write_profile(fresh_recovery_marker(root), json.dumps({
+        "ciphertext": str(ciphertext),
+        "sha256": authority_digest(ciphertext),
+    }, sort_keys=True))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=("add-wg", "add-open", "list-wg", "list-open", "export-wg", "export-open", "revoke-wg", "revoke-open", "renew-open", "replace-server", "recover-fresh", "recover-compromised"))
+    parser.add_argument("--vpn-host", required=True)
+    parser.add_argument("--client")
+    parser.add_argument("--workdir")
+    parser.add_argument("--state-file")
+    parser.add_argument("--replacement-secrets-file")
+    args = parser.parse_args()
+    needs_client = {"add-wg", "add-open", "export-wg", "export-open"}
+    if args.action in needs_client and not args.client:
+        parser.error("--client is required for this action")
+    if args.action == "recover-fresh" and not args.replacement_secrets_file:
+        parser.error("--replacement-secrets-file is required for recover-fresh")
+    if args.action == "recover-compromised" and not args.replacement_secrets_file:
+        parser.error("--replacement-secrets-file is required for recover-compromised")
+    try:
+        requested = name(args.client) if args.action in needs_client else None
+        vpn_host = host(args.vpn_host)
+        if args.action == "renew-open":
+            renew_remote(vpn_host)
+            print("success")
+            return 0
+        vault_password()
+        replacement, replacement_digest = (replacement_secrets(args.replacement_secrets_file)
+                                            if args.action in {"recover-fresh", "recover-compromised"} else ({}, ""))
+    except Error as error:
+        print(f"bastion-vpn-lifecycle: {error}", file=sys.stderr)
+        return 1
+    root = local_root(args.workdir)
+    ciphertext = Path(args.state_file).resolve() if args.state_file else DEFAULT_CIPHERTEXT
+    try:
+        with lock(root):
+            recovering_fresh = args.action == "recover-fresh"
+            recovering_compromise = args.action == "recover-compromised"
+            if recovering_compromise:
+                fail("confirmed VPS compromise may expose the CA; use recover-fresh and explicitly re-enroll every device")
+            retrying_fresh = fresh_recovery_retry(root, ciphertext) if recovering_fresh else False
+            fresh = not ciphertext.exists()
+            state = decrypt(ciphertext) if not fresh else initial(vpn_host) if args.action.startswith("add-") or recovering_fresh else fail("authority has not been initialized; add a device first")
+            pending = state.get("pending")
+            if pending:
+                if pending["action"] != args.action:
+                    fail("authority has a partial operation; rerun that same operation to reconcile it")
+                if recovering_fresh and pending["replacement_secrets_sha256"] != replacement_digest:
+                    fail("fresh recovery input does not match the pending operation")
+                if args.action.startswith("add-") and requested != pending["device"]:
+                    fail("authority has a partial operation for a different device")
+                if args.action.startswith("revoke-"):
+                    retry_choice(pending["device"])
+                if pending.get("server_keys_pending"):
+                    save_replacement_vault(state, replacement if recovering_fresh else None)
+                try:
+                    publish(state, vpn_host)
+                except Error as error:
+                    fail(f"partial failure: authority ciphertext was saved; retry to reconcile publish/apply/verify: {error}")
+                del state["pending"]
+                save(state, ciphertext)
+                save_current_authority(root, ciphertext)
+                if recovering_fresh:
+                    fresh_recovery_marker(root).unlink(missing_ok=True)
+                print("success")
+                return 0
+            if args.action == "list-wg": print("\n".join(sorted(state["wireguard"]["clients"]))); return 0
+            if args.action == "list-open": print("\n".join(sorted(state["openvpn"]["clients"]))); return 0
+            if args.action == "export-wg": print(export_wg(state, root, args.client)); return 0
+            if args.action == "export-open": print(export_open(state, root, args.client)); return 0
+            if args.action == "replace-server":
+                replace_server(state)
+                state["pending"] = {"action": args.action, "device": "server", "server_keys_pending": True}
+                save(state, ciphertext)
+                save_current_authority(root, ciphertext)
+                save_replacement_vault(state)
+                stage_publish(state, vpn_host)
+                fail("partial failure: replacement server-key Vault ciphertext was saved and public release staging was attempted; run make apply, then rerun this command")
+            if recovering_fresh:
+                if retrying_fresh:
+                    fail("fresh recovery state is incomplete")
+                state["pending"] = {"action": args.action, "device": "fresh", "server_keys_pending": True,
+                                    "replacement_secrets_sha256": replacement_digest}
+                save(state, ciphertext)
+                save_fresh_recovery_marker(root, ciphertext)
+                save_replacement_vault(state, replacement)
+                stage_publish(state, vpn_host)
+                fail("partial failure: fresh authority and server-key Vault ciphertext were saved and public release staging was attempted; run make apply, then rerun this command")
+            device = requested if args.action.startswith("add-") else chosen(state, "wg" if args.action.endswith("wg") else "open")
+            if args.action == "add-wg": add_wg(state, device)
+            elif args.action == "add-open": add_open(state, device)
+            elif args.action == "revoke-wg": del state["wireguard"]["clients"][device]; state["revocations"].append({"protocol": "wireguard", "name": device})
+            else: revoke_open(state, device)
+            advance_membership_revision(state)
+            state["pending"] = {"action": args.action, "device": device, "server_keys_pending": fresh}
+            save(state, ciphertext)
+            save_current_authority(root, ciphertext)
+            if fresh:
+                save_server_vault(state)
+                fail("partial failure: server-key Vault ciphertext was saved; run make apply, then rerun this command")
+            try:
+                publish(state, vpn_host)
+            except Error as error:
+                fail(f"partial failure: authority ciphertext was saved; retry to reconcile publish/apply/verify: {error}")
+            del state["pending"]
+            save(state, ciphertext)
+            save_current_authority(root, ciphertext)
+        print("success")
+        return 0
+    except Error as error:
+        print(f"bastion-vpn-lifecycle: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply a complete Bastion VPN public state release
+Requires=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service
+BindsTo=bastion-secrets.service
+After=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/bastion-vpn-apply-state-once
+ExecStopPost=/usr/local/libexec/bastion-vpn-cleanup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

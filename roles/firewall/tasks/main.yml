@@ -1,0 +1,811 @@
+---
+- name: Validate the configured firewall uplink
+  ansible.builtin.assert:
+    that:
+      - netplan_interface is defined
+      - netplan_interface is string
+      - netplan_interface | length > 0
+      - netplan_interface is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: netplan_interface must be a non-empty Linux interface name.
+
+- name: Validate fresh SSH verification inputs
+  vars:
+    firewall_fresh_ssh_input:
+      host: "{{ ansible_host | default('') }}"
+      port: "{{ ansible_port | default(ansible_ssh_port | default(22, true), true) }}"
+      user: "{{ ansible_user | default('') }}"
+      private_key_file: >-
+        {{ ansible_ssh_private_key_file | default(ansible_private_key_file | default('', true), true) }}
+      ssh_args: "{{ ansible_ssh_args | default('') }}"
+      ssh_common_args: "{{ ansible_ssh_common_args | default('') }}"
+      ssh_extra_args: "{{ ansible_ssh_extra_args | default('') }}"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/bastion-verify-fresh-ssh.py"
+      - --validate
+      - "{{ firewall_fresh_ssh_input | to_json }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Install UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: false
+
+- name: Check for an unexpected active nftables loader
+  ansible.builtin.command:
+    argv: [systemctl, is-active, --quiet, nftables.service]
+  register: firewall_nftables_loader
+  changed_when: false
+  failed_when: false
+
+- name: Reject an unexpected active nftables loader
+  ansible.builtin.assert:
+    that: firewall_nftables_loader.rc != 0
+    fail_msg: >-
+      nftables.service is active. Stop and review the unrelated static firewall
+      before applying Bastion's UFW policy.
+
+- name: Read the existing UFW ownership marker
+  ansible.builtin.command:
+    argv: [grep, -F, -x, '# Managed by Bastion', /etc/ufw/before.rules]
+  register: firewall_ufw_marker
+  changed_when: false
+  failed_when: false
+
+- name: Check for the managed UFW state manifest
+  ansible.builtin.stat:
+    path: /etc/ufw/bastion-rules.sha256
+  register: firewall_ufw_manifest
+
+- name: Check for the managed UFW state version
+  ansible.builtin.stat:
+    path: /etc/ufw/bastion-state-version
+  register: firewall_ufw_state_version
+
+- name: Read the managed UFW state version
+  ansible.builtin.command:
+    argv: [cat, /etc/ufw/bastion-state-version]
+  register: firewall_ufw_state_version_contents
+  changed_when: false
+  when: firewall_ufw_state_version.stat.exists
+
+- name: Check for an interrupted Bastion UFW apply
+  ansible.builtin.stat:
+    path: /etc/ufw/bastion-apply-pending
+  register: firewall_ufw_pending
+
+- name: Read the interrupted Bastion UFW apply marker
+  ansible.builtin.command:
+    argv: [cat, /etc/ufw/bastion-apply-pending]
+  register: firewall_ufw_pending_contents
+  changed_when: false
+  when: firewall_ufw_pending.stat.exists
+
+- name: Read the UFW configuration outside its enabled setting
+  ansible.builtin.slurp:
+    src: /etc/ufw/ufw.conf
+  register: firewall_ufw_conf
+
+- name: Check the managed UFW state manifest
+  ansible.builtin.command:
+    argv: [sha256sum, --check, /etc/ufw/bastion-rules.sha256]
+  register: firewall_ufw_manifest_check
+  changed_when: false
+  failed_when: false
+  when: firewall_ufw_manifest.stat.exists
+
+- name: Read the managed UFW state manifest paths
+  ansible.builtin.command:
+    argv: [cat, /etc/ufw/bastion-rules.sha256]
+  register: firewall_ufw_manifest_contents
+  changed_when: false
+  when: firewall_ufw_manifest.stat.exists
+
+- name: Require the exact managed UFW state manifest paths
+  vars:
+    firewall_ufw_manifest_v1_paths:
+      - /etc/default/ufw
+      - /etc/ufw/before.rules
+      - /etc/ufw/before6.rules
+      - /etc/ufw/user.rules
+      - /etc/ufw/user6.rules
+    firewall_ufw_manifest_v2_paths:
+      - /etc/default/ufw
+      - /etc/ufw/ufw.conf
+      - /etc/ufw/sysctl.conf
+      - /etc/ufw/before.rules
+      - /etc/ufw/before6.rules
+      - /etc/ufw/after.rules
+      - /etc/ufw/after6.rules
+      - /etc/ufw/user.rules
+      - /etc/ufw/user6.rules
+      - /etc/ufw/before.init
+      - /etc/ufw/after.init
+    firewall_ufw_manifest_paths: >-
+      {{ firewall_ufw_manifest_contents.stdout_lines |
+      map('regex_replace', '^[0-9a-f]{64}  ?', '') | list | sort }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        firewall_ufw_manifest_contents.stdout_lines |
+        select('match', '^[0-9a-f]{64}  ?/etc/') | list |
+        length == firewall_ufw_manifest_contents.stdout_lines | length
+      - >-
+        firewall_ufw_manifest_paths == (firewall_ufw_manifest_v1_paths | sort) or
+        firewall_ufw_manifest_paths == (firewall_ufw_manifest_v2_paths | sort)
+    fail_msg: >-
+      UFW state manifest must contain exactly the v1 or current managed policy
+      inputs; review the incomplete or unexpected manifest before applying.
+  when:
+    - firewall_ufw_manifest.stat.exists
+    - not firewall_ufw_pending.stat.exists
+
+- name: Read packaged UFW policy input checksums
+  ansible.builtin.command:
+    argv: [dpkg-query, '--showformat=${Conffiles}', --show, ufw]
+  register: firewall_ufw_package_conffiles
+  changed_when: false
+
+- name: Read packaged UFW policy skeleton checksums
+  ansible.builtin.command:
+    argv:
+      - md5sum
+      - /usr/share/ufw/before.rules
+      - /usr/share/ufw/before6.rules
+      - /usr/share/ufw/after.rules
+      - /usr/share/ufw/after6.rules
+      - /usr/share/ufw/before.init
+      - /usr/share/ufw/after.init
+      - /usr/share/ufw/ufw.conf
+  register: firewall_ufw_package_skeletons
+  changed_when: false
+
+- name: Inspect fresh UFW policy inputs
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    checksum_algorithm: md5
+  loop:
+    - /etc/default/ufw
+    - /etc/ufw/ufw.conf
+    - /etc/ufw/sysctl.conf
+    - /etc/ufw/before.rules
+    - /etc/ufw/before6.rules
+    - /etc/ufw/after.rules
+    - /etc/ufw/after6.rules
+    - /etc/ufw/before.init
+    - /etc/ufw/after.init
+  register: firewall_ufw_policy_inputs
+
+- name: Reject unrecognized fresh UFW policy inputs
+  vars:
+    firewall_ufw_package_skeleton_paths:
+      /etc/ufw/before.rules: /usr/share/ufw/before.rules
+      /etc/ufw/before6.rules: /usr/share/ufw/before6.rules
+      /etc/ufw/after.rules: /usr/share/ufw/after.rules
+      /etc/ufw/after6.rules: /usr/share/ufw/after6.rules
+      /etc/ufw/before.init: /usr/share/ufw/before.init
+      /etc/ufw/after.init: /usr/share/ufw/after.init
+      /etc/ufw/ufw.conf: /usr/share/ufw/ufw.conf
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.checksum is defined
+      - >-
+        firewall_ufw_package_conffiles.stdout_lines |
+        select('match', '^ ' ~ item.item ~ ' ' ~ item.stat.checksum ~ '( obsolete)?$') |
+        list | length == 1 or
+        (item.item in firewall_ufw_package_skeleton_paths and
+        firewall_ufw_package_skeletons.stdout_lines |
+        select('equalto', item.stat.checksum ~ '  ' ~
+        firewall_ufw_package_skeleton_paths[item.item]) | list | length == 1)
+    fail_msg: >-
+      {{ item.item }} is not the packaged UFW policy input. Restore the package
+      configuration or review the custom firewall policy before applying Bastion.
+  loop: "{{ firewall_ufw_policy_inputs.results }}"
+  when:
+    - firewall_ufw_marker.rc != 0
+    - not firewall_ufw_manifest.stat.exists
+    - not firewall_ufw_state_version.stat.exists
+
+- name: Reject executable UFW initialization hooks
+  ansible.builtin.assert:
+    that: not item.stat.executable
+    fail_msg: >-
+      {{ item.item }} is executable. Remove the custom UFW initialization hook
+      before applying Bastion.
+  loop: "{{ firewall_ufw_policy_inputs.results }}"
+  when: item.item in ['/etc/ufw/before.init', '/etc/ufw/after.init']
+
+- name: Reject policy inputs omitted by the legacy UFW manifest
+  vars:
+    firewall_ufw_package_skeleton_paths:
+      /etc/ufw/after.rules: /usr/share/ufw/after.rules
+      /etc/ufw/after6.rules: /usr/share/ufw/after6.rules
+      /etc/ufw/before.init: /usr/share/ufw/before.init
+      /etc/ufw/after.init: /usr/share/ufw/after.init
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.checksum is defined
+      - >-
+        firewall_ufw_package_conffiles.stdout_lines |
+        select('match', '^ ' ~ item.item ~ ' ' ~ item.stat.checksum ~ '( obsolete)?$') |
+        list | length == 1 or
+        (item.item in firewall_ufw_package_skeleton_paths and
+        firewall_ufw_package_skeletons.stdout_lines |
+        select('equalto', item.stat.checksum ~ '  ' ~
+        firewall_ufw_package_skeleton_paths[item.item]) | list | length == 1)
+    fail_msg: >-
+      {{ item.item }} is outside the v1 UFW manifest and differs from its
+      package default. Review the custom firewall policy before applying Bastion.
+  loop: "{{ firewall_ufw_policy_inputs.results }}"
+  when:
+    - item.item in ['/etc/ufw/after.rules', '/etc/ufw/after6.rules', '/etc/ufw/sysctl.conf', '/etc/ufw/before.init', '/etc/ufw/after.init']
+    - firewall_ufw_marker.rc == 0
+    - firewall_ufw_manifest.stat.exists
+    - firewall_ufw_state_version.stat.exists
+    - firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1'
+    - firewall_ufw_manifest_check.rc == 0
+
+- name: Reject UFW configuration omitted by the legacy manifest
+  vars:
+    firewall_ufw_conf_without_enabled: >-
+      {{ firewall_ufw_conf.content | b64decode |
+      regex_replace('(?m)^ENABLED=(yes|no)$', 'ENABLED=no') }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        firewall_ufw_package_conffiles.stdout_lines |
+        select('match', '^ /etc/ufw/ufw.conf ' ~
+        (firewall_ufw_conf_without_enabled | hash('md5')) ~ '( obsolete)?$') |
+        list | length == 1 or
+        firewall_ufw_package_skeletons.stdout_lines |
+        select('equalto', (firewall_ufw_conf_without_enabled | hash('md5')) ~
+        '  /usr/share/ufw/ufw.conf') | list | length == 1
+    fail_msg: >-
+      /etc/ufw/ufw.conf is outside the v1 UFW manifest and differs from the
+      package configuration except for ENABLED. Review it before applying Bastion.
+  when:
+    - firewall_ufw_marker.rc == 0
+    - firewall_ufw_manifest.stat.exists
+    - firewall_ufw_state_version.stat.exists
+    - firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1'
+    - firewall_ufw_manifest_check.rc == 0
+
+- name: Read existing UFW user rules
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -h
+      - '^### tuple'
+      - /etc/ufw/user.rules
+      - /etc/ufw/user6.rules
+  register: firewall_ufw_user_rules
+  changed_when: false
+  failed_when: false
+
+- name: Read existing raw UFW user-chain rules
+  vars:
+    firewall_ufw_user_scaffold: >-
+      {{ ['^(#|$|\*filter$|COMMIT$|###.*$|',
+      ':ufw6?-(user|before|after|logging)-(input|output|forward|logging-input|',
+      'logging-output|logging-forward|logging-deny|logging-allow|deny|allow|limit|',
+      'limit-accept) - \[0:0\]$',
+      '|-A ufw6?-after-logging-(input|forward) -j LOG --log-prefix ',
+      '"\[UFW BLOCK\] " -m limit --limit 3/min --limit-burst 10$',
+      '|-I ufw6?-logging-deny -m conntrack --ctstate INVALID -j RETURN ',
+      '-m limit --limit 3/min --limit-burst 10$',
+      '|-A ufw6?-logging-deny -j LOG --log-prefix "\[UFW BLOCK\] " ',
+      '-m limit --limit 3/min --limit-burst 10$',
+      '|-A ufw6?-logging-allow -j LOG --log-prefix "\[UFW ALLOW\] " ',
+      '-m limit --limit 3/min --limit-burst 10$',
+      '|-A ufw6?-user-limit -m limit --limit 3/minute -j LOG ',
+      '--log-prefix "\[UFW LIMIT BLOCK\] "$|-A ufw6?-user-limit -j REJECT$',
+      '|-A ufw6?-user-limit-accept -j ACCEPT$)'] | join('') }}
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -hEv
+      - "{{ firewall_ufw_user_scaffold }}"
+      - /etc/ufw/user.rules
+      - /etc/ufw/user6.rules
+  register: firewall_ufw_raw_user_rules
+  changed_when: false
+  failed_when: false
+
+- name: Read fresh UFW default policies
+  ansible.builtin.command:
+    argv: [cat, /etc/default/ufw]
+  register: firewall_ufw_defaults
+  changed_when: false
+
+- name: Reject UFW defaults omitted by the legacy manifest
+  vars:
+    firewall_ufw_expected_default_lines:
+      - IPV6=yes
+      - DEFAULT_INPUT_POLICY="DROP"
+      - DEFAULT_OUTPUT_POLICY="ACCEPT"
+      - DEFAULT_FORWARD_POLICY="DROP"
+      - DEFAULT_APPLICATION_POLICY="SKIP"
+      - MANAGE_BUILTINS=no
+      - IPT_SYSCTL=/etc/ufw/sysctl.conf
+      - IPT_MODULES=""
+  ansible.builtin.assert:
+    that: >-
+      (firewall_ufw_defaults.stdout_lines | reject('match', '^(#|$)') |
+      list | sort) == (firewall_ufw_expected_default_lines | sort)
+    fail_msg: >-
+      /etc/default/ufw is outside the v1 UFW manifest and differs from the
+      package configuration required by Bastion. Review it before applying Bastion.
+  when:
+    - firewall_ufw_marker.rc == 0
+    - firewall_ufw_manifest.stat.exists
+    - firewall_ufw_state_version.stat.exists
+    - firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1'
+    - firewall_ufw_manifest_check.rc == 0
+
+- name: Read the existing UFW state
+  ansible.builtin.command:
+    argv: [ufw, status, verbose]
+  register: firewall_ufw_status
+  changed_when: false
+
+- name: Read UFW rules recorded during an interrupted apply
+  ansible.builtin.command:
+    argv: [ufw, show, added]
+  register: firewall_ufw_added_rules
+  changed_when: false
+  when: firewall_ufw_pending.stat.exists
+
+- name: Read the UFW enabled setting during an interrupted apply
+  ansible.builtin.command:
+    argv: [grep, -E, '^ENABLED=(yes|no)$', /etc/ufw/ufw.conf]
+  register: firewall_ufw_enabled_setting
+  changed_when: false
+  when: firewall_ufw_pending.stat.exists
+
+- name: Start with no safe interrupted UFW apply
+  ansible.builtin.set_fact:
+    firewall_ufw_pending_valid: false
+
+- name: Validate safe interrupted UFW policy inputs
+  vars:
+    firewall_ufw_package_skeleton_paths:
+      /etc/ufw/before.rules: /usr/share/ufw/before.rules
+      /etc/ufw/before6.rules: /usr/share/ufw/before6.rules
+      /etc/ufw/after.rules: /usr/share/ufw/after.rules
+      /etc/ufw/after6.rules: /usr/share/ufw/after6.rules
+      /etc/ufw/before.init: /usr/share/ufw/before.init
+      /etc/ufw/after.init: /usr/share/ufw/after.init
+      /etc/ufw/ufw.conf: /usr/share/ufw/ufw.conf
+    firewall_ufw_pending_default_lines:
+      - IPV6=yes
+      - DEFAULT_INPUT_POLICY="DROP"
+      - DEFAULT_OUTPUT_POLICY="ACCEPT"
+      - DEFAULT_FORWARD_POLICY="DROP"
+      - DEFAULT_APPLICATION_POLICY="SKIP"
+      - MANAGE_BUILTINS=no
+      - IPT_SYSCTL=/etc/ufw/sysctl.conf
+      - IPT_MODULES=""
+    firewall_ufw_pending_input_is_allowed: >-
+      {{ firewall_ufw_package_conffiles.stdout_lines |
+      select('match', '^ ' ~ item.item ~ ' ' ~ item.stat.checksum ~ '( obsolete)?$') |
+      list | length == 1 or
+      (item.item in firewall_ufw_package_skeleton_paths and
+      firewall_ufw_package_skeletons.stdout_lines |
+      select('equalto', item.stat.checksum ~ '  ' ~
+      firewall_ufw_package_skeleton_paths[item.item]) | list | length == 1) or
+      (item.item == '/etc/ufw/before.rules' and
+      item.stat.checksum == (lookup('ansible.builtin.template', 'before.rules.j2') | hash('md5'))) or
+      (item.item == '/etc/ufw/before6.rules' and
+      item.stat.checksum == (lookup('ansible.builtin.template', 'before6.rules.j2') | hash('md5'))) or
+      (item.item in ['/etc/ufw/user.rules', '/etc/ufw/user6.rules']) or
+      (item.item == '/etc/ufw/ufw.conf' and
+      firewall_ufw_enabled_setting.stdout == 'ENABLED=yes' and
+      'Status: active' in firewall_ufw_status.stdout) }}
+    firewall_ufw_pending_added_rule: >-
+      ^ufw (allow( in)? (22/tcp|443/(tcp|udp))|route allow in on
+      (tun-openvpn|wg-bastion) out on {{ netplan_interface }})$
+    firewall_ufw_pending_raw_rule: >-
+      ^(-A ufw6?-user-(input|forward) (-p tcp --dport (22|443)|-p udp --dport 443|-i
+      (tun-openvpn|wg-bastion) -o {{ netplan_interface }}) -j ACCEPT|-A ufw6?-user-limit
+      -m limit --limit 3/minute -j LOG --log-prefix "\[UFW LIMIT BLOCK\] "|-A ufw6?-user-limit
+      -j REJECT|-A ufw6?-user-limit-accept -j ACCEPT)$
+  ansible.builtin.assert:
+    that:
+      - >-
+        firewall_ufw_pending_contents.stdout_lines | length == 2 and
+        firewall_ufw_pending_contents.stdout_lines[0] == 'bastion-ufw-apply-v1' and
+        firewall_ufw_pending_contents.stdout_lines[1] ==
+        (firewall_ufw_conf.content | b64decode |
+        regex_replace('(?m)^ENABLED=(yes|no)$', '') | hash('sha256'))
+      - >-
+        (firewall_ufw_defaults.stdout_lines | reject('match', '^(#|$)') |
+        list | sort) == (firewall_ufw_pending_default_lines | sort)
+      - item.stat.exists
+      - item.stat.checksum is defined
+      - firewall_ufw_pending_input_is_allowed
+      - >-
+        firewall_ufw_added_rules.stdout_lines | reject('match', '^Added user rules') |
+        reject('equalto', '') | reject('match', firewall_ufw_pending_added_rule) |
+        list | length == 0
+      - >-
+        firewall_ufw_added_rules.stdout_lines | select('match', '^ufw ') |
+        list | length <= 5
+      - >-
+        firewall_ufw_added_rules.stdout_lines | select('match', '^ufw ') |
+        list | unique | length ==
+        (firewall_ufw_added_rules.stdout_lines | select('match', '^ufw ') | list | length)
+      - >-
+        firewall_ufw_raw_user_rules.stdout_lines |
+        reject('equalto', '') | reject('match', firewall_ufw_pending_raw_rule) |
+        list | length == 0
+    fail_msg: >-
+      Interrupted UFW policy contains an unrecognized input or rule. Restore
+      the known state instead of retrying over a custom firewall change.
+  loop: "{{ firewall_ufw_policy_inputs.results }}"
+  when: firewall_ufw_pending.stat.exists
+
+- name: Permit the validated interrupted UFW apply to resume
+  ansible.builtin.set_fact:
+    firewall_ufw_pending_valid: true
+  when: firewall_ufw_pending.stat.exists
+
+- name: Reject unexpected UFW policy before mutation
+  ansible.builtin.assert:
+    that:
+      - >-
+        (firewall_ufw_marker.rc == 0 and
+        firewall_ufw_manifest.stat.exists and
+        firewall_ufw_state_version.stat.exists and
+        firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1' and
+        firewall_ufw_manifest_check.rc == 0) or
+        firewall_ufw_pending_valid or
+        (firewall_ufw_marker.rc != 0 and
+        not firewall_ufw_manifest.stat.exists and
+        not firewall_ufw_state_version.stat.exists and
+        firewall_ufw_user_rules.rc != 0 and
+        firewall_ufw_raw_user_rules.rc != 0 and
+        firewall_ufw_defaults.stdout_lines | select('equalto', 'DEFAULT_INPUT_POLICY="DROP"') | list | length == 1 and
+        firewall_ufw_defaults.stdout_lines | select('equalto', 'DEFAULT_OUTPUT_POLICY="ACCEPT"') | list | length == 1 and
+        firewall_ufw_defaults.stdout_lines | select('equalto', 'DEFAULT_FORWARD_POLICY="DROP"') | list | length == 1)
+    fail_msg: >-
+      UFW is not a fresh package configuration or the exact managed Bastion
+      state. Review and remove custom rules before applying the firewall role.
+
+- name: Read the active Bastion UFW rules
+  ansible.builtin.command:
+    argv: [ufw, status, numbered]
+  register: firewall_ufw_numbered
+  changed_when: false
+  when:
+    - >-
+      (firewall_ufw_marker.rc == 0 and firewall_ufw_manifest.stat.exists and
+      firewall_ufw_state_version.stat.exists and
+      firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1' and
+      firewall_ufw_manifest_check.rc == 0) or firewall_ufw_pending_valid
+    - "'Status: active' in firewall_ufw_status.stdout"
+
+- name: Reject stale rules in the active Bastion UFW policy
+  vars:
+    firewall_ufw_numbered_rule: '^\[\s*[0-9]+\]\s+'
+    firewall_ufw_inbound_rule: >-
+      (22/tcp|443/(tcp|udp))( \(v6\))?\s+ALLOW IN\s+Anywhere( \(v6\))?
+    firewall_ufw_route_rule: >-
+      Anywhere( \(v6\))? on {{ netplan_interface }}\s+ALLOW FWD\s+Anywhere( \(v6\))? on (tun-openvpn|wg-bastion)
+  ansible.builtin.assert:
+    that:
+      - >-
+        'Default: deny (incoming), allow (outgoing), deny (routed)' in firewall_ufw_status.stdout or
+        'Default: deny (incoming), allow (outgoing), disabled (routed)' in firewall_ufw_status.stdout
+      - >-
+        firewall_ufw_numbered.stdout_lines |
+        select('match', '^\[\s*[0-9]+\]') |
+        list | length == 10 or firewall_ufw_pending_valid
+      - >-
+        firewall_ufw_numbered.stdout_lines |
+        select('match', '^\[\s*[0-9]+\]') |
+        reject('match', firewall_ufw_numbered_rule ~ '(' ~ firewall_ufw_inbound_rule ~ '|' ~ firewall_ufw_route_rule ~ ')\s*$') |
+        list | length == 0
+    fail_msg: >-
+      Active Bastion UFW rules differ from the managed SSH/VPN policy. Review
+      and remove the stale rules before applying the firewall role.
+  when:
+    - >-
+      (firewall_ufw_marker.rc == 0 and firewall_ufw_manifest.stat.exists and
+      firewall_ufw_state_version.stat.exists and
+      firewall_ufw_state_version_contents.stdout == 'bastion-ufw-state-v1' and
+      firewall_ufw_manifest_check.rc == 0) or firewall_ufw_pending_valid
+    - "'Status: active' in firewall_ufw_status.stdout"
+
+- name: Detect whether the managed UFW policy needs an apply marker
+  vars:
+    firewall_ufw_before_rules_checksum: >-
+      {{ firewall_ufw_policy_inputs.results |
+      selectattr('item', 'equalto', '/etc/ufw/before.rules') |
+      map(attribute='stat.checksum') | first }}
+    firewall_ufw_before6_rules_checksum: >-
+      {{ firewall_ufw_policy_inputs.results |
+      selectattr('item', 'equalto', '/etc/ufw/before6.rules') |
+      map(attribute='stat.checksum') | first }}
+  ansible.builtin.set_fact:
+    firewall_ufw_apply_needed: >-
+      {{ firewall_ufw_pending.stat.exists or
+      not firewall_ufw_manifest.stat.exists or
+      not firewall_ufw_state_version.stat.exists or
+      firewall_ufw_before_rules_checksum !=
+      (lookup('ansible.builtin.template', 'before.rules.j2') | hash('md5')) or
+      firewall_ufw_before6_rules_checksum !=
+      (lookup('ansible.builtin.template', 'before6.rules.j2') | hash('md5')) }}
+
+- name: Record the Bastion UFW apply in progress
+  ansible.builtin.copy:
+    content: |
+      bastion-ufw-apply-v1
+      {{ firewall_ufw_conf.content | b64decode |
+      regex_replace('(?m)^ENABLED=(yes|no)$', '') | hash('sha256') }}
+    dest: /etc/ufw/bastion-apply-pending
+    owner: root
+    group: root
+    mode: '0600'
+  when: firewall_ufw_apply_needed
+
+- name: Preserve fail2ban built-in chains
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^#?MANAGE_BUILTINS='
+    line: MANAGE_BUILTINS=no
+  register: firewall_ufw_manage_builtins
+
+- name: Enable IPv6 in UFW
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^#?IPV6='
+    line: IPV6=yes
+  register: firewall_ufw_ipv6
+
+- name: Install Bastion UFW IPv4 rules
+  ansible.builtin.template:
+    src: before.rules.j2
+    dest: /etc/ufw/before.rules
+    owner: root
+    group: root
+    mode: '0640'
+  register: firewall_ufw_before_rules
+
+- name: Install Bastion UFW IPv6 rules
+  ansible.builtin.template:
+    src: before6.rules.j2
+    dest: /etc/ufw/before6.rules
+    owner: root
+    group: root
+    mode: '0640'
+  register: firewall_ufw_before6_rules
+
+- name: Validate Bastion UFW IPv4 rules
+  ansible.builtin.command:
+    argv: [iptables-restore, --test, /etc/ufw/before.rules]
+  changed_when: false
+
+- name: Validate Bastion UFW IPv6 rules
+  ansible.builtin.command:
+    argv: [ip6tables-restore, --test, /etc/ufw/before6.rules]
+  changed_when: false
+
+- name: Deny incoming UFW traffic by default
+  community.general.ufw:
+    default: deny
+    direction: incoming
+  register: firewall_ufw_default_incoming
+
+- name: Allow outgoing UFW traffic by default
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+  register: firewall_ufw_default_outgoing
+
+- name: Deny routed UFW traffic by default
+  community.general.ufw:
+    default: deny
+    direction: routed
+  register: firewall_ufw_default_routed
+
+- name: Allow SSH through UFW
+  community.general.ufw:
+    rule: allow
+    direction: in
+    proto: tcp
+    port: '22'
+  register: firewall_ufw_allow_ssh
+
+- name: Allow OpenVPN through UFW
+  community.general.ufw:
+    rule: allow
+    direction: in
+    proto: tcp
+    port: '443'
+  register: firewall_ufw_allow_openvpn
+
+- name: Allow WireGuard through UFW
+  community.general.ufw:
+    rule: allow
+    direction: in
+    proto: udp
+    port: '443'
+  register: firewall_ufw_allow_wireguard
+
+- name: Allow OpenVPN tunnel egress through UFW
+  community.general.ufw:
+    rule: allow
+    route: true
+    interface_in: tun-openvpn
+    interface_out: "{{ netplan_interface }}"
+  register: firewall_ufw_allow_openvpn_egress
+
+- name: Allow WireGuard tunnel egress through UFW
+  community.general.ufw:
+    rule: allow
+    route: true
+    interface_in: wg-bastion
+    interface_out: "{{ netplan_interface }}"
+  register: firewall_ufw_allow_wireguard_egress
+
+- name: Reload active UFW after managed policy changes
+  ansible.builtin.command:
+    argv: [ufw, reload]
+  register: firewall_ufw_reload
+  changed_when: true
+  when: >-
+    'Status: active' in firewall_ufw_status.stdout and
+    (firewall_ufw_manage_builtins.changed or
+    firewall_ufw_ipv6.changed or
+    firewall_ufw_before_rules.changed or
+    firewall_ufw_before6_rules.changed or
+    firewall_ufw_default_incoming.changed or
+    firewall_ufw_default_outgoing.changed or
+    firewall_ufw_default_routed.changed or
+    firewall_ufw_allow_ssh.changed or
+    firewall_ufw_allow_openvpn.changed or
+    firewall_ufw_allow_wireguard.changed or
+    firewall_ufw_allow_openvpn_egress.changed or
+    firewall_ufw_allow_wireguard_egress.changed or
+    firewall_ufw_pending_valid)
+
+- name: Verify UFW remains active after reload # noqa no-handler
+  ansible.builtin.command:
+    argv: [ufw, status]
+  register: firewall_ufw_reloaded_status
+  changed_when: false
+  when: firewall_ufw_reload.changed | default(false)
+
+- name: Require active UFW after reload # noqa no-handler
+  ansible.builtin.assert:
+    that: "'Status: active' in firewall_ufw_reloaded_status.stdout"
+    fail_msg: UFW became inactive after reloading the managed policy.
+  when: firewall_ufw_reload.changed | default(false)
+
+- name: Enable the Bastion UFW policy
+  community.general.ufw:
+    state: enabled
+
+- name: Enable and start UFW
+  ansible.builtin.systemd_service:
+    name: ufw.service
+    enabled: true
+    state: started
+
+- name: Verify that UFW is active
+  ansible.builtin.command:
+    argv: [ufw, status]
+  register: firewall_ufw_active
+  changed_when: false
+
+- name: Require the active UFW policy
+  ansible.builtin.assert:
+    that: "'Status: active' in firewall_ufw_active.stdout"
+    fail_msg: UFW did not become active; retaining the legacy Bastion firewall.
+
+- name: Calculate the managed UFW state manifest
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - /etc/default/ufw
+      - /etc/ufw/ufw.conf
+      - /etc/ufw/sysctl.conf
+      - /etc/ufw/before.rules
+      - /etc/ufw/before6.rules
+      - /etc/ufw/after.rules
+      - /etc/ufw/after6.rules
+      - /etc/ufw/user.rules
+      - /etc/ufw/user6.rules
+      - /etc/ufw/before.init
+      - /etc/ufw/after.init
+  register: firewall_ufw_manifest_contents
+  changed_when: false
+
+- name: Record the managed UFW state manifest
+  ansible.builtin.copy:
+    content: "{{ firewall_ufw_manifest_contents.stdout }}\n"
+    dest: /etc/ufw/bastion-rules.sha256
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Record the managed UFW state version
+  ansible.builtin.copy:
+    content: "bastion-ufw-state-v1\n"
+    dest: /etc/ufw/bastion-state-version
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Clear the completed Bastion UFW apply marker
+  ansible.builtin.file:
+    path: /etc/ufw/bastion-apply-pending
+    state: absent
+  when: firewall_ufw_apply_needed
+
+- name: Reset the Ansible SSH connection after firewall activation
+  ansible.builtin.meta: reset_connection
+
+- name: Authenticate a fresh SSH connection after firewall activation
+  vars:
+    firewall_fresh_ssh_input:
+      host: "{{ ansible_host | default('') }}"
+      port: "{{ ansible_port | default(ansible_ssh_port | default(22, true), true) }}"
+      user: "{{ ansible_user | default('') }}"
+      private_key_file: >-
+        {{ ansible_ssh_private_key_file | default(ansible_private_key_file | default('', true), true) }}
+      ssh_args: "{{ ansible_ssh_args | default('') }}"
+      ssh_common_args: "{{ ansible_ssh_common_args | default('') }}"
+      ssh_extra_args: "{{ ansible_ssh_extra_args | default('') }}"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/bastion-verify-fresh-ssh.py"
+      - "{{ firewall_fresh_ssh_input | to_json }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Check for the legacy Bastion firewall unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/bastion-nftables.service
+  register: firewall_legacy_unit
+
+- name: Stop and disable the legacy Bastion firewall unit
+  ansible.builtin.systemd_service:
+    name: bastion-nftables.service
+    enabled: false
+    state: stopped
+  when: firewall_legacy_unit.stat.exists
+
+- name: Remove legacy Bastion firewall files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/bastion-nftables.service
+    - /etc/nftables.d/90-bastion-vpn.nft
+  notify: Reload systemd after firewall migration
+
+- name: Check for the legacy Bastion nftables table
+  ansible.builtin.command:
+    argv: [nft, list, table, inet, bastion]
+  register: firewall_legacy_table
+  changed_when: false
+  failed_when: false
+
+- name: Remove only the legacy Bastion nftables table
+  ansible.builtin.command:
+    argv: [nft, delete, table, inet, bastion]
+  when: firewall_legacy_table.rc == 0
+  changed_when: true

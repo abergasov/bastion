@@ -1,0 +1,26 @@
+# Tasks
+
+## 1. Dependency and package contract
+
+- [x] 1.1 Pin a compatible `community.general` version in `collections/requirements.yml` and document operator/test installation; verify the collection installs and `ansible-doc community.general.ufw` resolves with the pinned Ansible core.
+- [x] 1.2 Inspect the selected Ubuntu 26.04 UFW defaults, unit, sysctl loading and fail2ban action/backend in a disposable fixture; record package versions, relevant chain ordering and rule-validation commands in the design/evidence before implementing the migration.
+
+## 2. UFW policy and integration
+
+- [x] 2.1 Add `roles/firewall/` with pre-mutation conflict checks, IPv6 enabled, incoming/routed deny, outgoing allow and only the required SSH/VPN service rules; verify fresh and known-managed fixtures converge and conflicting stale allows/loaders fail without changing effective policy.
+- [x] 2.2 Add native UFW IPv4/IPv6 rule templates for the four early isolation drops and existing-pool masquerade, preserve required control/return traffic and forwarding sysctls, and remove packaged extra service allowances; validate rendered rules with the installed restore tools and add a focused regression check for isolation preceding established/related acceptance.
+- [x] 2.3 Connect the role to bootstrap/site before VPN activation, replace the VPN apply unit's old firewall dependency with enabled/loaded UFW, and retire obsolete VPN firewall tasks/templates/handlers; verify syntax checks and unit ordering, including failure preventing new unprotected VPN activation.
+- [x] 2.4 Implement ordered existing-host migration and scoped cleanup: allow SSH before UFW activation, retain the old policy until fresh authenticated SSH succeeds, then retire only the old Bastion unit/file/table; verify injected validation/activation/SSH-verification failures retain the old policy and the documented rollback restores protection before disabling UFW.
+- [x] 2.5 Preserve fail2ban rules during UFW activation/reload without resetting jail policy; test actual IPv4/IPv6 SSH log matching, ban enforcement through migration and reload, unbanned admin access, and restored access after unban.
+
+## 3. Regression and integration verification
+
+- [x] 3.1 Update nftables-specific assertions in `tests/vpn-static-test.sh` and explicit role lists in the VPN, device-lifecycle and recovery VM fixtures; verify the focused static checks pass and fixtures exercise the production firewall role with synthetic secrets and local notification mocks.
+- [x] 3.2 Extend the existing peer matrix to verify UFW ingress against real allowed/blocked TCP and UDP listeners, required control traffic, both VPNs' IPv4/IPv6 egress and DNS, and all same/cross-VPN isolation directions including seeded established/related traffic; require packet-level results after migration and UFW reload, not status output alone.
+- [x] 3.3 Run isolated fresh-install and nftables-to-UFW migration cases, unchanged reapply (`changed=0`, no unnecessary firewall/VPN reload), reboot and failure recovery; verify no old table/unit dependency returns, and credentials, membership and revoked-device denial survive the relevant device-lifecycle/recovery checks. Clean disposable evidence: `/tmp/bastion-vpn-vm.Y1k727/` and `/tmp/bastion-vpn-clean-final.log` (all migration safety gates, packet/reload/seeded-isolation matrix, revocation/reboot/reapply tail, terminal VPN VM marker).
+- [x] 3.4 Run relevant formatting/static checks, `rtk make test`, syntax with the pinned isolated collection, and changed-scope `ansible-lint`; report the five unrelated full-lint baseline violations explicitly. Run the adapted `rtk make vpn-vm-test` with isolated VM inputs and the distinct existing cross-component recovery VM suite. Do not rerun aggregate `recovery-integration-test`, because it duplicates the completed full VPN VM suite; record that exclusion and all exact results. Do not use a live inventory or real Telegram endpoint as a test shortcut. Evidence: clean VPN suite `/tmp/bastion-vpn-vm.Y1k727/` and `/tmp/bastion-vpn-clean-final.log`; cross-component recovery `/tmp/bastion-recovery-cross-component.rYg5Vs/` and `/tmp/bastion-recovery-cross-final.log` (`ok=116 changed=63`, repeat `ok=109 changed=0`, reboot 103 s, terminal marker). `make test`, exact guard/static checks, strict OpenSpec validation and diff check passed; full `ansible-lint` retains five documented unrelated baseline violations.
+
+## 4. Operator documentation and review
+
+- [x] 4.1 Update installation, VPN, maintenance and verification documentation with collection setup, effective UFW inspection including NAT/custom rules, migration/rollback steps and SSH precautions; verify commands against the disposable fixtures and distinguish new UFW evidence from historical nftables evidence.
+- [x] 4.2 Complete one final implementation diff review for scoped cleanup, SSH safety, packet policy, fail2ban coexistence, idempotence and affected callers; resolve findings, rerun affected checks and validate the OpenSpec change strictly before marking implementation complete. Live deployment remains separately authorized and is not a checkbox completed by local tests. Final reviewer found no actionable high/medium issue after the clean VPN and cross-component recovery evidence; strict OpenSpec validation and diff check passed.

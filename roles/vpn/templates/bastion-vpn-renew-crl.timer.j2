@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Bastion OpenVPN CRL renewal check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=bastion-vpn-renew-crl-activate.service
+
+[Install]
+WantedBy=timers.target
