@@ -171,23 +171,8 @@ rg -F -q 'install_pinned_collections "$resume/repo" "$run/collections"' tests/de
 rg -F -q 'install_pinned_collections "$tmp/repo" "$tmp/collections"' tests/device-lifecycle-vm-test.sh
 rg -F -q 'ansible-galaxy collection install -r "$repo/collections/requirements.yml" -p "$destination" --force' tests/device-lifecycle-vm-test.sh
 rg -F -q 'export ANSIBLE_COLLECTIONS_PATH="$destination"' tests/device-lifecycle-vm-test.sh
-rg -q 'line: IPV6=yes' roles/firewall/tasks/main.yml
-rg -q 'line: MANAGE_BUILTINS=no' roles/firewall/tasks/main.yml
-rg -q 'default: deny' roles/firewall/tasks/main.yml
-rg -q 'direction: incoming' roles/firewall/tasks/main.yml
-rg -q 'direction: outgoing' roles/firewall/tasks/main.yml
-rg -q 'direction: routed' roles/firewall/tasks/main.yml
-rg -q "port: '22'" roles/firewall/tasks/main.yml
-rg -q "port: '443'" roles/firewall/tasks/main.yml
-! rg -n 'ufw reset|flush ruleset|nft flush' roles/firewall
-rg -q 'Reject stale rules in the active Bastion UFW policy' roles/firewall/tasks/main.yml
-python3 tests/firewall-ufw-status-test.py
-python3 tests/firewall-ufw-guard-ansible-test.py
-python3 tests/firewall-policy-inputs-test.py
-python3 tests/firewall-manifest-test.py
-python3 tests/firewall-manifest-test.py
+python3 tests/firewall-direct-policy-test.py
 python3 tests/firewall-ufw-ip6tables-test.py
-python3 tests/firewall-retry-test.py
 ban_probe_keygen_line=$(rg -n 'ssh-keygen -q -t ed25519 -N' tests/vpn-vm-test.sh | cut -d: -f1)
 server_scp_args_line=$(rg -n '^server_scp_args=' tests/vpn-vm-test.sh | cut -d: -f1)
 peer_scp_args_line=$(rg -n '^peer_scp_args=' tests/vpn-vm-test.sh | cut -d: -f1)
@@ -207,44 +192,8 @@ rg -q 'netdev=peer0,mac=52:54:00:12:34:57' tests/vpn-vm-test.sh
 rg -q 'netdev=peer0,mac=52:54:00:12:34:58' tests/vpn-vm-test.sh
 rg -q 'ip -6 neigh replace 2001:db8:100::2 lladdr 52:54:00:12:34:58' tests/vpn-vm-test.sh
 rg -q 'ip -6 neigh replace 2001:db8:100::1 lladdr 52:54:00:12:34:57' tests/vpn-vm-test.sh
-rg -F -q 'disabled (routed)' roles/firewall/tasks/main.yml
-rg -F -q 'deny (routed)' roles/firewall/tasks/main.yml
-rg -q 'Reject unexpected UFW policy before mutation' roles/firewall/tasks/main.yml
-rg -q 'Read existing raw UFW user-chain rules' roles/firewall/tasks/main.yml
-rg -q 'bastion-ufw-state-v1' roles/firewall/tasks/main.yml
-rg -q 'Validate fresh SSH verification inputs' roles/firewall/tasks/main.yml
-rg -q 'Authenticate a fresh SSH connection after firewall activation' roles/firewall/tasks/main.yml
-rg -q 'delegate_to: localhost' roles/firewall/tasks/main.yml
-rg -q 'bastion-verify-fresh-ssh.py' roles/firewall/tasks/main.yml
-rg -q 'no_log: true' roles/firewall/tasks/main.yml
-rg -q '^SSH_COMMON_ARGS_JSON :=.*ansible_ssh_common_args' Makefile
-for target in bootstrap apply maintenance; do
-  make --no-print-directory -n "$target" | rg -q -- '--extra-vars.*ansible_ssh_common_args'
-  make --no-print-directory -n "$target" | rg -q -- '--ssh-common-args='
-done
-rg -q 'ControlMaster=no' roles/firewall/files/bastion-verify-fresh-ssh.py
-rg -q 'ControlPersist=no' roles/firewall/files/bastion-verify-fresh-ssh.py
-rg -q 'ControlPath=none' roles/firewall/files/bastion-verify-fresh-ssh.py
-! rg -q 'wait_for_connection' roles/firewall/tasks/main.yml
-python3 tests/firewall-fresh-ssh-test.py
-rg -q 'Reload active UFW after managed policy changes' roles/firewall/tasks/main.yml
-rg -q 'Verify UFW remains active after reload' roles/firewall/tasks/main.yml
-rg -q 'firewall_ufw_before_rules.changed' roles/firewall/tasks/main.yml
 ! test -e roles/vpn/templates/90-bastion-vpn.nft.j2
 ! test -e roles/vpn/templates/bastion-nftables.service.j2
-for rules in roles/firewall/templates/before.rules.j2 roles/firewall/templates/before6.rules.j2; do
-  rg -q 'wg-bastion.*wg-bastion.*DROP' "$rules"
-  rg -q 'tun-openvpn.*tun-openvpn.*DROP' "$rules"
-  rg -q 'wg-bastion.*tun-openvpn.*DROP' "$rules"
-  rg -q 'tun-openvpn.*wg-bastion.*DROP' "$rules"
-  last_isolation=$(rg -n 'tun-openvpn.*wg-bastion.*DROP' "$rules" | cut -d: -f1)
-  established=$(rg -n 'RELATED,ESTABLISHED.*ACCEPT' "$rules" | tail -n1 | cut -d: -f1)
-  [ "$last_isolation" -lt "$established" ]
-done
-rg -q '10.42.0.0/24' roles/firewall/templates/before.rules.j2
-rg -q '10.43.0.0/24' roles/firewall/templates/before.rules.j2
-rg -q 'fd42:1::/64' roles/firewall/templates/before6.rules.j2
-rg -q 'fd42:2::/64' roles/firewall/templates/before6.rules.j2
 rg -q '^Requires=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service$' roles/vpn/templates/bastion-vpn-apply.service.j2
 rg -q '^After=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service network-online.target$' roles/vpn/templates/bastion-vpn-apply.service.j2
 rg -q 'Requires=bastion-secrets.service' roles/vpn/tasks/main.yml roles/vpn/templates/bastion-vpn-apply.service.j2

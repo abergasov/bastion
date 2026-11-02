@@ -70,24 +70,19 @@ install the older 2.6 `openvpn-dco-dkms` module or copy installer tuning flags.
 
 The configured pools are `10.42.0.0/24` and `fd42:1::/64` for OpenVPN, and
 `10.43.0.0/24` and `fd42:2::/64` for WireGuard. UFW defaults to deny incoming
-and routed traffic, allow outgoing traffic and permits only TCP/22, TCP/443 and
-UDP/443. Its Bastion-managed `before.rules` and `before6.rules` place the four
-same/cross-tunnel drops before established/related forwarding and masquerade
-these pools on `netplan_interface`; multicast UPnP/mDNS allowances are absent.
-`MANAGE_BUILTINS=no` preserves unrelated built-in-chain users such as fail2ban.
-Inspect the effective policy with `ufw status verbose`, `ufw show raw`,
-`iptables-save` and `ip6tables-save`; UFW status alone does not show the custom
-NAT or ordering rules.
+and routed traffic, allow outgoing traffic and permits TCP/22, TCP/80,
+TCP/443, UDP/443, plus `ansible_port` as an additional TCP SSH rule (default
+`22` when undefined). OpenVPN remains TCP/443 and WireGuard remains UDP/443.
+The direct Ansible tasks add all SSH and inbound rules before enabling UFW once.
+Its Bastion-managed `before.rules` and `before6.rules` retain only the policy
+that native UFW rules cannot express: dual-stack NAT for these pools and the
+four same/cross-tunnel drops before established/related forwarding; multicast
+UPnP/mDNS allowances are absent. Inspect the effective policy with `ufw status
+verbose`, `ufw show raw`, `iptables-save` and `ip6tables-save`; UFW status alone
+does not show the custom NAT or ordering rules.
 
-UFW has completed disposable Ubuntu 26.04 QEMU clean-suite evidence:
-migration-failure retention, a fresh SSH/reboot gate, dual-stack fail2ban
-ban/unban, unchanged reapply, ingress and peer packet matrix, WireGuard
-recovery, established same/cross-tunnel isolation after reload, and the
-revocation/reboot/reapply tail. The distinct cross-component recovery suite
-also passed its initial apply, idempotent reapply and reboot with the local
-notification mock. This remains synthetic local evidence only. Historical
-nftables VM evidence below does not validate UFW, and no live VPS check has
-been run.
+Static checks cover this declared policy. A disposable VM or live VPS apply is
+separately authorized; no such result is claimed here.
 
 OpenVPN advertises full tunnel routes and DNS in this order: `1.1.1.1`, then
 `8.8.8.8`. The server supplies IPv6 egress and IPv4 fallback; a client OS or

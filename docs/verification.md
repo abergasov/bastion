@@ -2,56 +2,24 @@
 
 ## Current verification scope
 
-Этапы 1–5 и переход на UFW завершены по локальным планам. Автономное продление
-CRL реализовано и имеет synthetic regression coverage, но его disposable-VM
-проверки и итоговая совместная проверка остаются открытыми:
+Этапы 1–5 завершены по локальным планам; упрощённая UFW-роль имеет только
+статическое evidence. Автономное продление CRL реализовано и имеет synthetic
+regression coverage, но его disposable-VM проверки и итоговая совместная
+проверка остаются открытыми:
 [fix-review-findings, 1.6 и 2.1](../openspec/changes/fix-review-findings/tasks.md).
 Результаты ниже относятся к указанным версиям и сценариям; они не закрывают
 эти задачи или [live readiness, 5.1](../openspec/changes/implement-recovery-and-updates/tasks.md).
 
 ## UFW status
 
-Текущая UFW-проверка выполняется только на disposable Ubuntu 26.04 QEMU с
-синтетическими ключами и секретами, без VPS и Telegram. Уже сохранены staged
-markers: normal apply и fresh-SSH reboot, post-reboot runtime gate (raw
-dual-stack chains/NAT/fail2ban action), IPv4/IPv6 fail2ban baseline → ban →
-deny → unban, unchanged reapply `ok=77 changed=0`, ingress/peer matrix и
-WireGuard lifecycle recovery; missing-current state корректно дал ожидаемый
-отказ и затем был восстановлен. Текущие логи находятся в защищённом
-`/tmp/bastion-vpn-vm.CHxKSV/` и не являются долговечным артефактом.
+Ранее записанные disposable-VM результаты миграции UFW, fresh-SSH gate и
+явного UFW reload относятся к удалённому migration workflow. Они не являются
+evidence для упрощённой роли и не подтверждают её текущий контракт.
 
-После UFW reload отдельный seeded established/related сценарий также прошёл:
-восемь IPv4/IPv6 same/cross-tunnel TCP flows сначала обменялись данными через
-временные точные test-only allow rules, затем эти rules были проверенно удалены
-и established traffic был заблокирован до return allowance. Fresh clean VM suite
-и distinct cross-component recovery suite завершились успешно. Исторические
-nftables-результаты ниже не подтверждают UFW. В synthetic socket transport
-IPv6 NDP потребовал test-only static neighbours; это ограничение стенда, а не
-изменение production policy и не доказательство provider IPv6.
-
-После clean VPN gate recovery был проверен отдельным existing cross-component
-VM suite. Aggregate `recovery-integration-test` намеренно не запускался: он
-повторяет тот же full VPN VM suite; выбранный suite отдельно проверил recovery
-ролей firewall/VPN/secrets/notifications, idempotent reapply и reboot.
-`/tmp/bastion-recovery-cross-final.log` зафиксировал initial `ok=116 changed=63`,
-repeat `ok=109 changed=0`, reboot 103 s и
-`RECOVERY_CROSS_COMPONENT_VM_PASS`. Это также disposable synthetic evidence.
-
-Поздний targeted continuation завершился `RESUME_AFTER_INGRESS_LIVE_PASS`:
-revoked OpenVPN A был denied при активном/reconnected B, reboot занял 98 s,
-а reapply дал `ok=77 changed=1` только из-за fixture-state copy; denial A
-сохранился после reboot. Это reuse защищённого synthetic fixture, не замена
-обязательному fresh clean VM run.
-
-Fresh clean VM suite `/tmp/bastion-vpn-vm.Y1k727/` завершился terminal marker в
-`/tmp/bastion-vpn-clean-final.log`. Он подтвердил четыре pre-migration safety
-gate (invalid interface, stale UFW `changed=0`, injected enable code 42 и fresh
-no-mux SSH failure) с сохранением legacy policy, normal migration, unchanged
-reapply `ok=77 changed=0`, WireGuard lifecycle (stop/failed-start cleanup,
-denied/available traffic и recovery), firewall ingress/peer matrix, UFW reload,
-true seeded isolation восьми flows и revoke/reboot/reapply tail. В tail reapply
-дал `ok=77 changed=1` только из-за fixture-state copy; revoked A остался denied,
-а B active/reconnected. Это local synthetic evidence, не live-VPS evidence.
+Текущая проверка firewall ограничена статическими contract checks в
+`tests/firewall-direct-policy-test.py` и `tests/vpn-static-test.sh`; они
+проверяют прямые правила UFW, NAT и порядок isolation. Disposable VM и live VPS
+применение этой упрощённой роли не запускались и требуют отдельной авторизации.
 
 > Historical note: SOPS/age evidence below predates the Vault migration and is
 > not current Ubuntu/Ansible Vault verification.

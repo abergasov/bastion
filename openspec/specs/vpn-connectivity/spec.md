@@ -21,9 +21,10 @@ guarantees bypass of traffic filtering, anonymity or absolute security.
 
 ### Requirement: Inbound services and unrestricted outbound traffic
 
-Bastion SHALL permit inbound connections to SSH and the configured VPN endpoints
-only, rejecting connections to other listening services on both IPv4 and IPv6.
-The firewall SHALL allow established/related return traffic and control traffic
+Bastion SHALL permit inbound connections to TCP/22, TCP/80, TCP/443, the
+configured Ansible SSH port, and the configured VPN endpoints on both IPv4 and
+IPv6. The configured Ansible SSH port supplements TCP/22 when it differs. The
+firewall SHALL allow established/related return traffic and control traffic
 required for correct IPv4/IPv6 operation.
 
 Bastion SHALL NOT impose outbound destination or port restrictions on traffic
@@ -35,7 +36,7 @@ implementation to satisfy forwarding and isolation requirements.
 
 #### Scenario: Restrict inbound services
 - **WHEN** an external peer attempts new IPv4 or IPv6 connections to the VPS
-- **THEN** only SSH, OpenVPN TCP/443 and WireGuard UDP/443 are permitted as inbound services, subject to authentication and fail2ban
+- **THEN** TCP/22, TCP/80, TCP/443, the configured Ansible SSH port, OpenVPN TCP/443 and WireGuard UDP/443 are permitted, subject to authentication and fail2ban where applicable
 - **AND** required network control traffic and established/related replies remain permitted
 
 #### Scenario: Allow outbound traffic while preserving peer isolation
@@ -166,30 +167,27 @@ is controlled by the user and is outside the server's isolation guarantee.
 
 Bastion SHALL manage its persistent host and VPN firewall through UFW and
 Ansible on IPv4 and IPv6. UFW SHALL own Bastion's static ingress, forwarding
-and address-translation policy; the previous independent Bastion nftables
-policy SHALL NOT remain active after successful migration. fail2ban SHALL
-continue to own dynamic SSH bans under the existing administration requirements.
+and address-translation policy. fail2ban SHALL continue to own dynamic SSH bans
+under the existing administration requirements.
 
-The effective UFW policy SHALL preserve the existing inbound services,
-unrestricted outbound traffic, full-tunnel forwarding and client-isolation
-requirements. Unsolicited incoming and forwarded traffic SHALL be denied by
-default, with explicit VPN-to-uplink forwarding and required control/return
-traffic permitted. Packaged defaults or stale rules SHALL NOT expose additional
-services or bypass client isolation. Configuration conflicts SHALL be reported
-before activation rather than silently accepted or globally flushed.
+The effective UFW policy SHALL deny unsolicited incoming and forwarded traffic
+by default, permit unrestricted outbound traffic, and explicitly permit each
+VPN tunnel to forward to the configured uplink. IPv4/IPv6 peer-isolation drops
+SHALL precede a general established/related forward allowance, and address
+translation shall preserve both VPNs' dual-stack egress. Ansible SHALL use
+direct UFW tasks for package installation, defaults, ingress, routes and a
+single enablement; it SHALL NOT maintain Bastion-specific state manifests,
+interrupted-apply recovery or foreign-policy acceptance guards.
 
-The firewall SHALL persist across reboot. An unchanged Ansible reapplication
-SHALL produce no firewall changes or unnecessary reloads and SHALL preserve
-VPN identities, device membership and revocations. Inspection instructions
-SHALL cover the complete effective policy, including rules not shown by the
-ordinary UFW status listing.
+The firewall SHALL persist across reboot. Ansible reapplication SHALL preserve
+the effective firewall policy, VPN identities, device membership and revocations.
+Inspection instructions SHALL cover the complete effective policy, including
+rules not shown by the ordinary UFW status listing.
 
-#### Scenario: Install and inspect UFW
-- **WHEN** Ansible configures a supported fresh Ubuntu host
-- **THEN** UFW is enabled persistently for both address families
-- **AND** public TCP/22, TCP/443 and UDP/443 are permitted, subject to authentication and fail2ban, while probes to other listening services are blocked
-- **AND** required network control traffic and established/related replies work
-- **AND** operator instructions identify how to inspect filtering, forwarding and address translation
+#### Scenario: Apply the UFW policy
+- **WHEN** Ansible configures a supported Ubuntu host
+- **THEN** it permits the specified inbound services and VPN-to-uplink forwarding before enabling UFW once for both address families
+- **AND** the active policy preserves dual-stack NAT, control/return traffic and VPN client isolation
 
 #### Scenario: Forward through either VPN
 - **WHEN** authenticated OpenVPN and WireGuard test peers send IPv4/IPv6 traffic to destinations outside the VPN pools
@@ -200,46 +198,31 @@ ordinary UFW status listing.
 - **WHEN** test peers attempt same-VPN or cross-VPN communication through the VPS on IPv4 or IPv6, including traffic matching a pre-existing established/related entry
 - **THEN** peer-to-peer traffic is blocked before any general return-traffic allowance can bypass isolation
 
-#### Scenario: Reject conflicting firewall state
-- **WHEN** pre-activation inspection finds incompatible pre-existing UFW rules or a competing static firewall configuration
-- **THEN** configuration stops with an actionable conflict report before changing the effective firewall
-- **AND** it does not report successful convergence or erase unrelated rules
-
 #### Scenario: Reapply and reboot
 - **WHEN** unchanged configuration is reapplied and the host subsequently reboots
-- **THEN** reapplication has no firewall changes or unnecessary reloads
-- **AND** the enabled firewall is loaded before VPN activation, with the same ingress, dual-stack egress and isolation policy
+- **THEN** the enabled firewall is loaded before VPN activation, with the same ingress, dual-stack egress and isolation policy
 - **AND** credentials, membership and revoked-device denial remain unchanged
 
 ### Requirement: Safe transition to UFW
 
-Bastion SHALL prepare SSH access and the complete replacement policy before
-activating UFW. Migration SHALL retain the old protective policy until UFW is
-active and fresh administrator connectivity is verified while preserving a
-working administrative session. Only Bastion's obsolete firewall resources
-SHALL be removed; a global firewall reset SHALL NOT be used. Failure before
-retirement of the old policy SHALL leave that policy available and SHALL NOT
-be reported as a completed migration. Failed UFW activation SHALL NOT permit
-new VPN activation without a working firewall.
+Bastion SHALL add TCP/22 and the configured Ansible SSH allowance before
+enabling UFW. The role SHALL NOT reset UFW globally, adopt or validate arbitrary
+pre-existing firewall state, retain an interrupted-apply journal, or remove
+independently managed firewall resources. Existing-host migration and recovery
+remain an operator procedure authorized separately from this role's declarative
+application.
 
-Migration and subsequent UFW reloads SHALL preserve effective fail2ban SSH
-ban/unban behavior for both IP families without changing the packaged jail
-thresholds, windows, durations or exemptions. Successful migration SHALL leave
-no boot dependency on the removed firewall. Live rollout remains separately
+UFW activation and subsequent reapplication SHALL preserve effective fail2ban
+SSH ban/unban behavior for both IP families without changing the packaged jail
+thresholds, windows, durations or exemptions. Live rollout remains separately
 authorized under the recovery-and-verification requirements.
 
-#### Scenario: Migrate an existing Bastion host
-- **WHEN** an existing nftables-based Bastion host receives the UFW configuration
-- **THEN** SSH is permitted before UFW activation and a fresh authenticated administrative connection succeeds before legacy-policy removal
-- **AND** only the obsolete Bastion policy is retired after UFW activation succeeds
-- **AND** both VPNs retain connectivity and peer isolation after migration and reboot
-
-#### Scenario: Fail before the old policy is retired
-- **WHEN** UFW validation, activation or fresh SSH verification fails during migration
-- **THEN** the operation fails without removing the old policy or enabling unprotected VPN listeners
-- **AND** the retained administrative session can restore the previous firewall configuration using documented recovery steps
+#### Scenario: Enable UFW after SSH allowance
+- **WHEN** the firewall role applies to a host over SSH
+- **THEN** the configured SSH port allowance exists before UFW is enabled
+- **AND** the role enables UFW once without a global reset or a fresh-connection migration probe
 
 #### Scenario: Preserve active SSH bans
-- **WHEN** an IPv4 or IPv6 source is banned by the packaged fail2ban SSH policy during migration or a UFW reload
+- **WHEN** an IPv4 or IPv6 source is banned by the packaged fail2ban SSH policy during a UFW reapplication
 - **THEN** new SSH connections from that source remain blocked and an unbanned administrator can still connect
 - **AND** an ordinary unban restores new SSH access without changing jail policy
