@@ -71,18 +71,13 @@ ties these implementation plans to the approved baseline without duplicating it
 as delta specifications. Future behavior changes use `openspec/changes/`.
 
 The authorized [review corrections](changes/fix-review-findings/proposal.md)
-track complete UFW policy-input validation, interrupted-apply recovery, automatic
-CRL renewal on the VPS and current-authority digest synchronization. The owner
-chose autonomous server signing on 2026-11-01: a protected CA-key projection is
-allowed on the VPS, while client private keys and the Vault password remain
-controller-only. Compromise recovery must replace that exposed CA. The existing
-manual action now follows the server renewal path. Server scheduling, protected
-key projection, activation, compromise-recovery adaptation and failure status/
-notification are implemented and covered by synthetic regression checks. The
-[tasks and verification](changes/fix-review-findings/tasks.md) still distinguish
-that evidence from the pending disposable-VM timer, reboot and revoked-client
-admission checks (1.6), and combined regressions and final diff review (2.1).
-This change remains active with 6/8 tasks complete; no live readiness is claimed.
+contain historical VPS-signer work that is superseded by the active
+[controller-only CRL change](changes/use-long-lived-controller-crl/proposal.md).
+That change replaces the 2026-11-01 CA-key projection/timer decision with a
+locally signed CRL valid until the earlier of 3650 days and CA expiry, while
+retaining finite certificates and fail-closed validation. Its tasks track a
+verified sequence migration, atomic activation and signer cleanup; no live
+migration or readiness is claimed.
 
 The historical [NixOS platform](changes/archive/2026-10-20-implement-nixos-platform/proposal.md)
 and [NixOS secrets/administration](changes/archive/2026-10-20-implement-secrets-and-administration/proposal.md)

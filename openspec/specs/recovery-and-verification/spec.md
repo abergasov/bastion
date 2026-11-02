@@ -92,11 +92,11 @@ connectivity or a Vault password. Missing, invalid or stale material SHALL
 prevent dependent services from using it. The Vault password and full decrypted
 controller authority SHALL remain outside Git and SHALL NOT be copied to the VPS.
 Client private keys, SSH seeds and unrelated Vault values SHALL NOT be delivered.
-The CA signing key is the explicit exception: a separate protected server
-projection SHALL supply it to the local CRL renewal service, never to OpenVPN
-or the public release. The full authority ciphertext/database of private client
-material SHALL remain controller-only. Public issuance/revocation records and
-server-generated CRL sequence state SHALL persist separately from configuration.
+The CA private key and full authority ciphertext/database of private client
+material SHALL remain controller-only. The VPS may receive the signed CRL and
+public issuance/revocation records, but no CA-key projection, CRL signer or
+renewal timer. Public enrollment/revocation data SHALL persist separately from
+configuration.
 
 The owner authorizes reuse of needed secrets from the read-only local Ansible
 project. Import SHALL decrypt only in protected local working storage outside
@@ -118,7 +118,7 @@ to reuse secrets does not override fresh OpenVPN server identity requirements.
 - **WHEN** implementation reuses needed secrets from `/home/alejandro/go/src/ansible`
 - **THEN** the source is unchanged and only required target values are read in protected temporary storage and saved as Bastion Vault ciphertext
 - **AND** decryption credentials and plaintext do not appear in Git, output, diffs, fact caches or command arguments
-- **AND** SSH seeds, client private state, the full authority file and Vault passwords are excluded from imported server values; only the separately selected CA signing key may be provisioned for server renewal
+- **AND** SSH seeds, CA/client private state, the full authority file and Vault passwords are excluded from imported server values
 - **AND** the initial OpenVPN server identity is still generated freshly on the administrator's computer
 
 #### Scenario: Restore an optional credential backup
@@ -129,7 +129,7 @@ to reuse secrets does not override fresh OpenVPN server identity requirements.
 - **WHEN** generated files, permissions, logs and automation artifacts are checked
 - **THEN** plaintext secret material is absent from public artifacts and command arguments
 - **AND** secret files have restrictive access permissions
-- **AND** the VPS contains neither the Vault password nor client private keys; only the renewal service and root can read the provisioned CA key
+- **AND** the VPS contains neither the Vault password, CA private key nor client private keys
 
 ### Requirement: Owner-only age encryption of local credential state
 
@@ -197,10 +197,8 @@ need them. Decryption failure SHALL prevent dependent services from starting
 with missing or stale secret files. Plaintext SHALL NOT enter public automation
 artifacts, logs or diffs.
 CA and client private keys and authoritative enrollment/revocation records
-SHALL retain their controller copies. Under the current Vault model, the VPS
-SHALL additionally receive the separately protected CA signing key and public
-revocation projection for autonomous renewal. Client private keys and the full
-local authority ciphertext SHALL NOT be delivered or decryptable by the VPS.
+SHALL retain their controller copies and SHALL NOT be delivered or decryptable
+by the VPS.
 
 #### Scenario: Deploy encrypted server keys
 - **WHEN** the server activates its configuration with its private age key available
@@ -209,7 +207,7 @@ local authority ciphertext SHALL NOT be delivered or decryptable by the VPS.
 
 #### Scenario: Inspect secret separation
 - **WHEN** server files and all SOPS secrets decryptable by the VPS are inspected
-- **THEN** client private keys and the full authority file are absent, and the CA key is available only through the protected renewal-service projection
+- **THEN** the CA key, client private keys and the full authority file are absent
 - **AND** server VPN private keys remain available to their respective services
 
 #### Scenario: Replace a lost VPS
@@ -223,20 +221,16 @@ local authority ciphertext SHALL NOT be delivered or decryptable by the VPS.
 
 ### Requirement: Recovery after host compromise
 
-Documentation SHALL state that root access to the running VPS exposes the
-server-side CA signing key as well as VPN server keys and other deployed secrets.
-The CA key is not cryptographically limited to CRL renewal: a root attacker can
-also sign certificates and forge CRLs. Client private keys and the Vault password
-remain off the VPS; this does not make the exposed CA trustworthy.
+Documentation SHALL state that root access to the running VPS exposes VPN server
+keys and other deployed secrets, but not the controller-only CA private key,
+client private keys or Vault password.
 
-Recovery from confirmed full host compromise SHALL recreate the VPS, replace
-the exposed CA with fresh trust material, issue fresh server/device credentials
-and require explicit re-enrollment of intended devices. Old CA trust and old
-profiles SHALL NOT be reused. Replacement profiles SHALL pin only the newly
-issued OpenVPN server certificate; users remain responsible for installing them
-and removing old application trust. A path that preserves the exposed CA
-SHALL NOT be reported as sufficient recovery after the server has received the
-CA key.
+Recovery from confirmed full host compromise SHALL recreate the VPS and rotate
+host-accessible secrets. The controller CA and existing device trust MAY be
+retained only where no earlier VPS CA-key projection exposed that CA. If such
+earlier exposure occurred, recovery SHALL replace the CA with fresh trust
+material, issue fresh server/device credentials and require explicit
+re-enrollment; old CA trust and profiles SHALL NOT be reused.
 
 Every other host-accessible secret SHALL also be rotated, including VPN server
 keys, account-password material and notification credentials. Merely re-encrypting
@@ -245,12 +239,10 @@ trust revocation or issuance state obtained from the compromised server; only
 intended devices explicitly enrolled into fresh trust SHALL regain access.
 
 #### Scenario: Replace a compromised VPS
-- **WHEN** recovery follows a confirmed full compromise of a VPS provisioned with the CA signing key
-- **THEN** controller-side Vault deployment supplies a fresh CA and fresh server keys and other required secrets without sending a Vault password or client private key
-- **AND** intended devices are explicitly re-enrolled and receive replacement profiles pinning only the new server certificate
-- **AND** updating application trust is documented as the user's responsibility
+- **WHEN** recovery follows a confirmed full compromise
+- **THEN** controller-side Vault deployment supplies fresh server keys and other required secrets without sending a Vault password, CA key or client private key
 - **AND** host-accessible credentials are recorded as rotated before reuse
-- **AND** preserving the old CA or merely re-encrypting existing ciphertext is rejected as insufficient recovery
+- **AND** a fresh CA and explicit re-enrollment are required when an earlier VPS CA projection exposed that CA
 
 ### Requirement: Automation and integration verification
 
@@ -264,9 +256,9 @@ initial `admin`/`root` password setup, switching from `admin` to `root` through
 `su` with the root password, fail2ban matching and ban/unban on IPv4/IPv6, device add/revoke
 across reboot, package updates and Ansible reapplication, secret permissions and notifications using a local mock
 endpoint. Recreation and supported configuration restore procedures SHALL be tested,
-including missing/expired CRLs, autonomous renewal with the controller offline,
-active-client revocation, local certificate issuance and export, protected CA
-projection without client-key exposure, compromise recovery with fresh CA trust,
+including missing/expired CRLs, long-lived controller-issued CRL publication,
+active-client revocation, local certificate issuance and export, no CA-key
+projection, exposure-conditional compromise recovery,
 and partial failure between local and server updates.
 
 #### Scenario: Validate an implementation

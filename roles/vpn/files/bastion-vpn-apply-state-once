@@ -36,36 +36,4 @@ if "$configure_wireguard"; then
   /usr/local/libexec/bastion-vpn-configure-wireguard "$state"
 fi
 systemctl restart openvpn-server@bastion.service
-next_update=$(openssl crl -in "$state/openvpn/crl.pem" -noout -nextupdate | sed -n 's/^nextUpdate=//p')
-next_epoch=$(date -u -d "$next_update" +%s)
-python3 - "$state_root/crl-status.json" "$state/openvpn/metadata.json" "$next_epoch" <<'PY'
-import json
-import os
-import sys
-import time
-from pathlib import Path
-
-status, metadata = map(Path, sys.argv[1:3])
-next_update = int(sys.argv[3])
-try:
-    value = json.loads(status.read_text())
-    active = json.loads(metadata.read_text())
-except (OSError, ValueError, KeyError, TypeError):
-    value = {}
-    active = json.loads(metadata.read_text())
-value.update({
-    "membership_revision": active["membership_revision"],
-    "crl_sequence": active["crl_sequence"],
-    "activation_pending": False,
-    "next_update": next_update,
-    "result": "activated",
-    "reason": "activated",
-    "remaining_validity_seconds": max(0, next_update - int(time.time())),
-})
-value.setdefault("notification_failed", False)
-temporary = status.with_name(status.name + ".next")
-temporary.write_text(json.dumps(value, sort_keys=True) + "\n")
-os.chmod(temporary, 0o600)
-os.replace(temporary, status)
-PY
 trap - ERR

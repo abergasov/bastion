@@ -55,7 +55,6 @@
     mode: '0600'
   loop:
     - { source: openvpn-server-key, destination: openvpn-server-key }
-    - { source: openvpn-ca-key, destination: openvpn-ca-key }
     - { source: wireguard-server-key, destination: wireguard-server-key }
   no_log: true
   diff: false

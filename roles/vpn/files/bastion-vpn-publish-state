@@ -47,30 +47,32 @@ print(value["membership_revision"], value["crl_sequence"])
 PY
 )
 current_revision=0
+current_sequence=0
 if test -n "$old_state"; then
-  current_revision=$(python3 - "$old_state/openvpn/metadata.json" <<'PY'
+  read -r current_revision current_sequence < <(python3 - "$old_state/openvpn/metadata.json" <<'PY'
 import json
 import sys
 try:
     value = json.load(open(sys.argv[1], encoding="utf-8"))
-    print(value["membership_revision"] if value.get("version") == 2 else 0)
+    if value.get("version") != 2:
+        raise ValueError
+    print(value["membership_revision"], value["crl_sequence"])
 except (OSError, ValueError, KeyError):
-    print(0)
+    print(0, 0)
 PY
 )
 fi
 test "$incoming_revision" -ge "$current_revision" || {
   echo 'publisher refused stale membership revision' >&2; exit 1;
 }
+test "$incoming_sequence" -ge "$current_sequence" || {
+  echo 'publisher refused CRL sequence rollback' >&2; exit 1;
+}
 if test "$incoming_revision" -eq "$current_revision" && test -n "$old_state"; then
-  # Equal membership cannot replace a valid server-renewed CRL with controller bytes.
   cmp -s "$old_state/openvpn/ca.crt" "$staging/release/openvpn/ca.crt" &&
     cmp -s "$old_state/openvpn/index.txt" "$staging/release/openvpn/index.txt" || {
       echo 'publisher refused conflicting equal membership revision' >&2; exit 1;
     }
-  cp "$old_state/openvpn/crl.pem" "$staging/release/openvpn/crl.pem"
-  cp "$old_state/openvpn/metadata.json" "$staging/release/openvpn/metadata.json"
-  (cd "$staging/release" && sha256sum openvpn/ca.crt openvpn/crl.pem openvpn/index.txt openvpn/metadata.json openvpn/server.crt wireguard/peers > manifest.sha256)
 fi
 release="$releases/release-$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
 mv "$staging/release" "$release"
@@ -81,10 +83,6 @@ ln -s "releases/$(basename "$release")" "$state_root/.current.next"
 mv -Tf "$state_root/.current.next" "$current"
 flock -u 9
 
-if test "$incoming_revision" -gt "$current_revision" && test -r /run/secrets/bastion/openvpn-ca-key; then
-  # Reconcile from the newly accepted public input; it never restores the old release.
-  /usr/local/libexec/bastion-vpn-renew-crl --reconcile
-fi
 /usr/local/libexec/bastion-vpn-apply-state
 state=$(/usr/local/libexec/bastion-vpn-verify-state)
 test "$(realpath -e "$current")" = "$state"

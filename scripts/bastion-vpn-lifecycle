@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,7 +169,7 @@ def validate(state: object) -> dict:
             fail("authority OpenVPN client is invalid")
     pending = state.get("pending")
     if pending is not None:
-        if not isinstance(pending, dict) or pending.get("action") not in {"add-wg", "add-open", "revoke-wg", "revoke-open", "renew-open", "replace-server", "recover-fresh"} or not isinstance(pending.get("server_keys_pending"), bool):
+        if not isinstance(pending, dict) or pending.get("action") not in {"add-wg", "add-open", "revoke-wg", "revoke-open", "migrate-crl", "replace-server", "recover-fresh"} or not isinstance(pending.get("server_keys_pending"), bool):
             fail("authority pending operation is invalid")
         pending_keys = {"action", "device", "server_keys_pending"}
         if pending["action"] == "recover-fresh":
@@ -203,9 +204,8 @@ def save(state: dict, ciphertext: Path) -> None:
 
 
 def save_server_vault(state: dict) -> None:
-    """Create controller-side Vault ciphertext for VPS signing and server keys."""
+    """Create controller-side Vault ciphertext for VPS server keys."""
     save_vault(ROOT / "secrets" / "vpn-server.yaml", {
-        "openvpn-ca-key": state["pki"]["ca.key"],
         "openvpn-server-key": state["pki"]["server.key"],
         "wireguard-server-key": state["wireguard"]["server_private"],
     })
@@ -254,7 +254,6 @@ def save_replacement_vault(state: dict, replacement: dict | None = None) -> None
         vpn = ROOT / "secrets" / "vpn-server.yaml"
         staged.append((stage_vault(server, replacement), server))
         staged.append((stage_vault(vpn, {
-            "openvpn-ca-key": state["pki"]["ca.key"],
             "openvpn-server-key": state["pki"]["server.key"],
             "wireguard-server-key": state["wireguard"]["server_private"],
         }), vpn))
@@ -295,7 +294,6 @@ serial = $dir/serial
 crlnumber = $dir/crlnumber
 default_md = sha256
 default_days = 825
-default_crl_days = 30
 policy = policy_any
 copy_extensions = none
 unique_subject = no
@@ -331,8 +329,26 @@ def issue_server(directory: Path) -> None:
     run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private)])
     run(["openssl", "req", "-new", "-key", str(private), "-out", str(csr), "-subj", "/CN=bastion-server"])
     run(["openssl", "ca", "-batch", "-config", str(openssl), "-extensions", "server_cert", "-in", str(csr), "-out", str(directory / "server.crt")])
-    run(["openssl", "ca", "-config", str(openssl), "-gencrl", "-out", str(directory / "crl.pem")])
+    issue_crl(directory)
     csr.unlink()
+
+
+def crl_deadline(directory: Path) -> datetime:
+    value = run(["openssl", "x509", "-in", str(directory / "ca.crt"), "-noout", "-enddate"]).decode().strip()
+    try:
+        expires = datetime.strptime(value.removeprefix("notAfter="), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+    except ValueError:
+        fail("cannot parse OpenVPN CA expiry")
+    deadline = min(datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=3650), expires)
+    if deadline <= datetime.now(timezone.utc):
+        fail("OpenVPN CA is expired")
+    return deadline
+
+
+def issue_crl(directory: Path) -> None:
+    deadline = crl_deadline(directory).strftime("%y%m%d%H%M%SZ")
+    run(["openssl", "ca", "-config", str(config(directory)), "-gencrl", "-crl_nextupdate", deadline,
+         "-out", str(directory / "crl.pem")])
 
 
 def initial(endpoint: str) -> dict:
@@ -396,19 +412,10 @@ def revoke_open(state: dict, device: str) -> None:
         directory = Path(temporary); pki_dir(state, directory); openssl = config(directory)
         certificate = directory / "revoke.crt"; certificate.write_text(record["cert"])
         run(["openssl", "ca", "-config", str(openssl), "-revoke", str(certificate)])
-        run(["openssl", "ca", "-config", str(openssl), "-gencrl", "-out", str(directory / "crl.pem")])
+        issue_crl(directory)
         capture_pki(state, directory)
     del state["openvpn"]["clients"][device]
     state["revocations"].append({"protocol": "openvpn", "name": device})
-
-
-def renew_open_crl(state: dict) -> None:
-    """Re-sign the current CA database without changing any identity."""
-    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
-        directory = Path(temporary)
-        pki_dir(state, directory)
-        run(["openssl", "ca", "-config", str(config(directory)), "-gencrl", "-out", str(directory / "crl.pem")])
-        capture_pki(state, directory)
 
 
 def openvpn_profile(state: dict, record: dict) -> str:
@@ -546,11 +553,61 @@ def publish(state: dict, vpn_host: str) -> None:
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
-def renew_remote(vpn_host: str) -> None:
-    """Ask the VPS to renew; the controller never signs or transfers a CA key."""
+def remote_crl_sequence(vpn_host: str) -> int:
+    """Read the verified public VPS release through the normal admin/root path."""
     options = ["-o", "GlobalKnownHostsFile=/dev/null", "-o", f"UserKnownHostsFile={ROOT / 'inventory/known_hosts'}", "-o", "StrictHostKeyChecking=yes"]
-    command = "su -c " + shlex.quote("/usr/local/libexec/bastion-vpn-renew-crl --activate")
-    interactive(["ssh", "-tt", *options, f"admin@{vpn_host}", command])
+    command = "su -c " + shlex.quote('state=$(/usr/local/libexec/bastion-vpn-verify-state) && cat "$state/openvpn/metadata.json"')
+    try:
+        result = subprocess.run(["ssh", "-tt", *options, f"admin@{vpn_host}", command], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, check=False)
+    except OSError as error:
+        fail(f"cannot run ssh: {error}")
+    if result.returncode:
+        fail("cannot verify current VPS CRL release")
+    try:
+        metadata = json.loads(result.stdout.decode())
+        sequence = metadata["crl_sequence"]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        fail("VPS returned an unverifiable CRL sequence")
+    if (set(metadata) != {"version", "membership_revision", "crl_sequence", "openvpn_clients", "revocations"}
+            or metadata["version"] != 2 or not isinstance(sequence, int) or sequence < 1):
+        fail("VPS returned an unverifiable CRL sequence")
+    return sequence
+
+
+def needs_long_lived_crl(state: dict) -> bool:
+    with tempfile.TemporaryDirectory(prefix="bastion-crl-expiry.") as temporary:
+        crl = Path(temporary) / "crl.pem"
+        crl.write_text(state["pki"]["crl.pem"])
+        value = run(["openssl", "crl", "-in", str(crl), "-noout", "-nextupdate"]).decode().strip()
+    try:
+        expires = datetime.strptime(value.split("=", 1)[1], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+    except (IndexError, ValueError):
+        fail("cannot parse OpenVPN CRL expiry")
+    return expires < datetime.now(timezone.utc) + timedelta(days=3600)
+
+
+def migrate_legacy_crl_sequence(state: dict, vpn_host: str) -> bool:
+    """Seed a legacy server-issued sequence before replacing its short-lived CRL."""
+    if not needs_long_lived_crl(state):
+        return False
+    local_sequence = crl_sequence(state["pki"]["crl.pem"])
+    remote_sequence = remote_crl_sequence(vpn_host)
+    if remote_sequence < local_sequence:
+        fail("VPS CRL sequence would roll back controller state")
+    with tempfile.TemporaryDirectory(prefix="bastion-vpn-pki.") as temporary:
+        directory = Path(temporary)
+        pki_dir(state, directory)
+        try:
+            next_sequence = int((directory / "crlnumber").read_text().strip(), 16)
+        except ValueError:
+            fail("OpenVPN CRL sequence state is invalid")
+        (directory / "crlnumber").write_text(f"{max(next_sequence, remote_sequence + 1):X}\n")
+        issue_crl(directory)
+        if crl_sequence((directory / "crl.pem").read_text()) <= remote_sequence:
+            fail("controller CRL sequence did not exceed VPS state")
+        capture_pki(state, directory)
+    return True
 
 
 def stage_publish(state: dict, vpn_host: str) -> None:
@@ -641,7 +698,7 @@ def save_fresh_recovery_marker(root: Path, ciphertext: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("add-wg", "add-open", "list-wg", "list-open", "export-wg", "export-open", "revoke-wg", "revoke-open", "renew-open", "replace-server", "recover-fresh", "recover-compromised"))
+    parser.add_argument("action", choices=("add-wg", "add-open", "list-wg", "list-open", "export-wg", "export-open", "revoke-wg", "revoke-open", "migrate-crl", "replace-server", "recover-fresh", "recover-compromised"))
     parser.add_argument("--vpn-host", required=True)
     parser.add_argument("--client")
     parser.add_argument("--workdir")
@@ -658,10 +715,6 @@ def main() -> int:
     try:
         requested = name(args.client) if args.action in needs_client else None
         vpn_host = host(args.vpn_host)
-        if args.action == "renew-open":
-            renew_remote(vpn_host)
-            print("success")
-            return 0
         vault_password()
         replacement, replacement_digest = (replacement_secrets(args.replacement_secrets_file)
                                             if args.action in {"recover-fresh", "recover-compromised"} else ({}, ""))
@@ -706,6 +759,23 @@ def main() -> int:
             if args.action == "list-open": print("\n".join(sorted(state["openvpn"]["clients"]))); return 0
             if args.action == "export-wg": print(export_wg(state, root, args.client)); return 0
             if args.action == "export-open": print(export_open(state, root, args.client)); return 0
+            if args.action == "migrate-crl":
+                if not migrate_legacy_crl_sequence(state, vpn_host):
+                    print("success")
+                    return 0
+                state["pending"] = {"action": args.action, "device": "crl", "server_keys_pending": False}
+                save(state, ciphertext)
+                save_current_authority(root, ciphertext)
+                try:
+                    publish(state, vpn_host)
+                except Error as error:
+                    fail(f"partial failure: authority ciphertext was saved; retry to reconcile publish/apply/verify: {error}")
+                del state["pending"]
+                save(state, ciphertext)
+                save_current_authority(root, ciphertext)
+                print("success")
+                return 0
+            migrate_legacy_crl_sequence(state, vpn_host)
             if args.action == "replace-server":
                 replace_server(state)
                 state["pending"] = {"action": args.action, "device": "server", "server_keys_pending": True}

@@ -1,5 +1,10 @@
 # Tasks
 
+> CRL tasks 1.2, 1.5–1.7 record the superseded 2026-11-01 VPS-signer decision.
+> Their checked evidence is not evidence for the controller-only CRL target;
+> implementation and unrun verification now belong to
+> `use-long-lived-controller-crl`.
+
 ## 1. Review fixes
 
 - [x] 1.1 Reject unrecognized effective UFW policy inputs, including after rules and initialization hooks; prove fresh/known states pass and custom allowances/hooks fail before mutation using focused synthetic checks. Corrected package canonical sources and captured native logging scaffolds; synthetic guard fixtures and actual Ubuntu fresh apply passed (`/tmp/bastion-ufw-runtime.MedBTX/root-fresh-2.log`, exit 0).

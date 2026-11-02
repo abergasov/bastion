@@ -10,19 +10,18 @@ security fix вне него. День и время выбирает опера
 unattended updater или unattended rebooter: `make maintenance` не заменяет
 ручное решение оператора о перезагрузке.
 
-VPS ежедневно проверяет CRL через persistent systemd timer. За семь дней до
-`nextUpdate` (или после пропущенного запуска) root-only service подписывает
-новый 30-дневный CRL из текущих публичных issuance/revocation records и отдельно
-проецируемого CA key. При отсутствии, неверных правах или несоответствии ключа
-CA service записывает failure status и не открывает listener с невалидным CRL.
-Обычный no-op не перезапускает VPN.
+CRL не продлевается VPS timer-ом: он выпускается и подписывается controller-ом
+с `nextUpdate`, ограниченным 3650 днями и `notAfter` CA. При revoke controller
+атомарно публикует новый CRL; подпись, expiry и rollback проверяются до
+activation. Отсутствующий, невалидный или просроченный CRL остаётся fail-closed.
+Нет отдельного renewal service, timer или failure-notification path.
 
-`make vpn-renew-open VPN_HOST=vpn.example` остаётся диагностическим ручным
-запуском: он входит как `admin`, делает интерактивный `su` и запускает тот же
-VPS service; CA key и controller authority в команду не передаются. Проверяйте
-`systemctl status bastion-vpn-renew-crl.timer bastion-vpn-renew-crl.service` и
-`/var/lib/bastion/vpn/crl-status.json`. Timer не заменяет ручное решение о
-package updates или reboot.
+Для единственного перехода со старого VPS signer оператор после отдельной
+авторизации запускает `make vpn-migrate-open VPN_HOST=vpn.example`. Команда
+проверяет public current release, seed-ит sequence при необходимости и локально
+sign/publish/activate replacement CRL, не меняя membership. `vpn-add-*` и
+`vpn-revoke-*` не являются migration path. Это не scheduled maintenance и пока
+не имеет live evidence.
 
 ## До применения
 

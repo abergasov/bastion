@@ -1,5 +1,9 @@
 # Spec Delta
 
+> **Superseded delta.** This CA-projection recovery delta records the 2026-11-01
+> target and historical evidence only. `use-long-lived-controller-crl` replaces
+> it; this file does not prescribe current baseline behavior.
+
 ## MODIFIED Requirements
 
 ### Requirement: Persistent credential state and protected secrets

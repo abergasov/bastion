@@ -32,7 +32,7 @@ make vpn-export-wg VPN_HOST=vpn.example CLIENT=phone
 make vpn-export-open VPN_HOST=vpn.example CLIENT=laptop
 make vpn-revoke-wg VPN_HOST=vpn.example
 make vpn-revoke-open VPN_HOST=vpn.example
-make vpn-renew-open VPN_HOST=vpn.example
+make vpn-migrate-open VPN_HOST=vpn.example
 ```
 
 Revoke показывает локальный список и принимает только точное каноническое имя.
@@ -41,23 +41,23 @@ Revoke показывает локальный список и принимае�
 создания ключа, записи age ciphertext или SSH. Повторная выдача не заменяет
 существующий private key.
 
-## Продление OpenVPN CRL
+## OpenVPN CRL
 
-По [исправленной спецификации](../openspec/specs/device-lifecycle/spec.md)
-CRL автоматически проверяется VPS ежедневно и renews за семь дней до истечения;
-пропущенный запуск догоняется systemd timer. Service подписывает 30-дневный CRL
-из immutable public release (`ca.crt`, `index.txt`, membership revision),
-сохраняет новый immutable release и sequence вне controller authority. Равная
-revision публикации не может заменить более новый server CRL; старая revision
-отклоняется. Вне окна renewal ничего не меняется и WireGuard не
-перенастраивается.
+CRL подписывается только локально. Его `nextUpdate` равен более раннему из
+момента выпуска плюс 3650 дней и `notAfter` CA; server/client certificates
+остаются конечными. `vpn-revoke-open` сохраняет весь прежний набор revocations,
+подписывает replacement CRL, затем атомарно публикует и активирует его. Проверки
+signature, expiry, sequence/rollback и fail-closed admission обязательны.
 
-CA key находится только в root-owned runtime projection VPS и не доступен
-OpenVPN. Отсутствующий, не mode-0600, не root-owned или не соответствующий CA
-ключ даёт reported failure; истёкший/невалидный CRL не допускает запуск listener.
-Проверяйте `crl-status.json` и systemd journal. `make vpn-renew-open` — ручной
-VPS-side diagnosis/recovery path через `admin` + interactive `su`, не controller
-signing и не передача CA key.
+`make vpn-migrate-open VPN_HOST=...` — отдельная разовая controller-команда для
+перехода со старого VPS signer. Она через existing authenticated
+publish/reconcile path сначала проверяет public current release и при
+необходимости seed-ит более высокий sequence, затем локально подписывает,
+публикует и активирует CRL. Команда не меняет membership, devices или revocations;
+`vpn-add-*` и `vpn-revoke-*` её не запускают. Локальный CRL активируется до
+удаления CA-key projection, service/timer и server sequence state. Это не
+scheduler, не persistent switch и не новый framework; live migration пока не
+выполнялась. CA rotation нужна только при ранее подтверждённом VPS exposure.
 
 `recover-fresh` — не обычная lifecycle-операция и не способ повторить publish
 текущей authority. Он применяется только после решения, что current local
@@ -69,8 +69,8 @@ replacement JSON (0600) и создаёт complete fresh `server.yaml` вмес�
 `vpn-server.yaml`, не читая старый server ciphertext. Обычные `add`/`revoke`/export
 сохраняют существующую authority и для такого восстановления не подходят.
 
-После проекции CA на VPS `recover-compromised` намеренно отказывается от
-CA-preserving recovery и направляет к `recover-fresh`. Подтверждённая compromise
+Для ранее historical CA projection на VPS `recover-compromised` намеренно
+отказывается от CA-preserving recovery и направляет к `recover-fresh`. Подтверждённая compromise
 требует fresh CA trust, fresh server/device credentials, replacement profiles и
 явного повторного enrollment каждого разрешённого устройства; старые profiles
 нельзя считать безопасными. Current-authority marker не ослабляет это правило.
@@ -102,13 +102,13 @@ python3 tests/device-lifecycle-test.py`.
 
 Manager использует `wg genkey`/`wg pubkey` для пары WireGuard и OpenSSL
 `ca -revoke`/`ca -gencrl` для CRL. При первой выдаче он сам создаёт
-`secrets/vpn-server.yaml`: отдельный Vault ciphertext с OpenVPN CA key и двумя
-server private keys. Это единственное разрешённое исключение для CA: client
-private keys, полная authority и Vault password туда не переносятся. Следующий стандартный `make apply`
+`secrets/vpn-server.yaml`: отдельный Vault ciphertext с двумя server private
+keys. CA key, client private keys, полная authority и Vault password туда не
+переносятся. Следующий стандартный `make apply`
 доставляет этот ciphertext, после чего повтор той же lifecycle-команды
 публикует release; до этого команда возвращает `partial failure`.
 Runtime paths остаются
-`/run/secrets/bastion/openvpn-ca-key`, `/run/secrets/bastion/openvpn-server-key` и
+`/run/secrets/bastion/openvpn-server-key` и
 `/run/secrets/bastion/wireguard-server-key`. Server verifier сравнивает public
 key certificate с OpenVPN runtime private key до activation.
 

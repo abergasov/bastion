@@ -39,9 +39,8 @@ done
 test ! -e "$runtime_parent/openvpn-ca-key"
 test "$(find "$runtime_parent" -type f -name openvpn-ca-key -print | wc -l)" = 1
 rm "$persistent/openvpn-ca-key"
-if "$tmp_dir/activate"; then exit 1; fi
-test -s "$runtime/openvpn-ca-key"
-cp "$runtime/openvpn-ca-key" "$persistent/openvpn-ca-key"
+"$tmp_dir/activate"
+test ! -e "$runtime/openvpn-ca-key"
 rm "$persistent/root-password-hash"
 if "$tmp_dir/activate"; then exit 1; fi
 test -s "$runtime/admin-password-hash"

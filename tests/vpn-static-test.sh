@@ -194,8 +194,27 @@ rg -q 'ip -6 neigh replace 2001:db8:100::2 lladdr 52:54:00:12:34:58' tests/vpn-v
 rg -q 'ip -6 neigh replace 2001:db8:100::1 lladdr 52:54:00:12:34:57' tests/vpn-vm-test.sh
 ! test -e roles/vpn/templates/90-bastion-vpn.nft.j2
 ! test -e roles/vpn/templates/bastion-nftables.service.j2
-rg -q '^Requires=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service$' roles/vpn/templates/bastion-vpn-apply.service.j2
-rg -q '^After=bastion-secrets.service bastion-vpn-renew-crl.service ufw.service network-online.target$' roles/vpn/templates/bastion-vpn-apply.service.j2
+rg -q '^Requires=bastion-secrets.service ufw.service$' roles/vpn/templates/bastion-vpn-apply.service.j2
+rg -q '^After=bastion-secrets.service ufw.service network-online.target$' roles/vpn/templates/bastion-vpn-apply.service.j2
+! rg -q 'bastion-vpn-renew-crl' roles/vpn/files roles/vpn/templates Makefile
+rg -q 'Remove obsolete VPS CRL signer units' roles/vpn/tasks/main.yml
+rg -q 'Require a long-lived controller CRL before signer cleanup' roles/vpn/tasks/main.yml
+rg -q 'Require verified published VPN state before signer cleanup' roles/vpn/tasks/main.yml
+rg -q 'Check for legacy VPS CRL signer artifacts' roles/vpn/tasks/main.yml
+rg -q 'vpn_legacy_signer_present' roles/vpn/tasks/main.yml
+rg -q 'Remove obsolete persistent OpenVPN CA key after controller CRL activation' roles/vpn/tasks/main.yml
+rg -q 'Check obsolete VPS CRL signer unit presence' roles/vpn/tasks/main.yml
+! rg -q 'failed_when: false' roles/vpn/tasks/main.yml
+! rg -q 'Remove obsolete persistent OpenVPN CA key' roles/secrets_administration/tasks/main.yml
+controller_check_line=$(rg -n 'Require a long-lived controller CRL before signer cleanup' roles/vpn/tasks/main.yml | cut -d: -f1)
+ca_cleanup_line=$(rg -n 'Remove obsolete persistent OpenVPN CA key after controller CRL activation' roles/vpn/tasks/main.yml | cut -d: -f1)
+signer_cleanup_line=$(rg -n 'Check obsolete VPS CRL signer unit presence' roles/vpn/tasks/main.yml | cut -d: -f1)
+test "$controller_check_line" -lt "$ca_cleanup_line"
+test "$ca_cleanup_line" -lt "$signer_cleanup_line"
+rg -A10 'Require verified published VPN state before signer cleanup' roles/vpn/tasks/main.yml | rg -F -q 'vpn_state_verification.rc | default(1) == 0'
+rg -A10 'Require verified published VPN state before signer cleanup' roles/vpn/tasks/main.yml | rg -q 'when: vpn_legacy_signer_present'
+test "$(rg -c 'vpn_long_lived_crl.rc | default(1) == 0' roles/vpn/tasks/main.yml)" -ge 4
+rg -q 'publisher refused CRL sequence rollback' roles/vpn/files/bastion-vpn-publish-state
 rg -q 'Requires=bastion-secrets.service' roles/vpn/tasks/main.yml roles/vpn/templates/bastion-vpn-apply.service.j2
 rg -q '^BindsTo=bastion-secrets.service$' roles/vpn/templates/bastion-vpn-apply.service.j2
 rg -q '^ExecStopPost=/usr/local/libexec/bastion-vpn-cleanup$' roles/vpn/templates/bastion-vpn-apply.service.j2
@@ -281,7 +300,8 @@ rg -q 'openssl", "ca".*"-gencrl"' scripts/bastion-vpn-lifecycle
 rg -q 'peer-fingerprint' scripts/bastion-vpn-lifecycle
 rg -q '0.0.0.0/0, ::/0' scripts/bastion-vpn-lifecycle
 rg -q 'VPN server certificate does not match its runtime private key' roles/vpn/files/bastion-vpn-verify-state
-for target in vpn-add-wg vpn-add-open vpn-list-wg vpn-list-open vpn-export-wg vpn-export-open vpn-revoke-wg vpn-revoke-open; do
+for target in vpn-add-wg vpn-add-open vpn-list-wg vpn-list-open vpn-export-wg vpn-export-open vpn-revoke-wg vpn-revoke-open vpn-migrate-open; do
   make --no-print-directory -n "$target" VPN_HOST=vpn.example CLIENT=device >/dev/null
 done
+rg -A2 '^vpn-migrate-open:' Makefile | rg -q 'migrate-crl --vpn-host'
 ! rg -q '^vpn-.*HOST' Makefile

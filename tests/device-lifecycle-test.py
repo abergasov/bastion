@@ -202,11 +202,13 @@ class LifecycleTest(unittest.TestCase):
 
     def test_recover_fresh_saves_pending_state_then_retries_publish(self):
         authority = state()
+        original_migration = lifecycle.migrate_legacy_crl_sequence
         original = (lifecycle.ROOT, lifecycle.initial, lifecycle.stage_vault, lifecycle.publish,
                     lifecycle.save, lifecycle.decrypt, lifecycle.recipient,
                     lifecycle.vps_recipient, sys.argv)
         sops, published = [], []
         try:
+            lifecycle.migrate_legacy_crl_sequence = lambda current, endpoint: None
             with tempfile.TemporaryDirectory() as temporary:
                 lifecycle.ROOT = Path(temporary)
                 configure_vault_root(lifecycle.ROOT)
@@ -241,17 +243,20 @@ class LifecycleTest(unittest.TestCase):
                 self.assertNotIn("pending", lifecycle.decrypt(ciphertext))
                 self.assertFalse((Path(temporary) / "recover-fresh.pending").exists())
         finally:
+            lifecycle.migrate_legacy_crl_sequence = original_migration
             (lifecycle.ROOT, lifecycle.initial, lifecycle.stage_vault, lifecycle.publish,
              lifecycle.save, lifecycle.decrypt, lifecycle.recipient,
              lifecycle.vps_recipient, sys.argv) = original
 
     def test_recover_fresh_retries_after_second_sops_write_failure(self):
         authority = state()
+        original_migration = lifecycle.migrate_legacy_crl_sequence
         original = (lifecycle.ROOT, lifecycle.initial, lifecycle.stage_vault, lifecycle.publish,
                     lifecycle.save, lifecycle.decrypt, lifecycle.recipient,
                     lifecycle.vps_recipient, sys.argv)
         calls, published, fail_second = [], [], [True]
         try:
+            lifecycle.migrate_legacy_crl_sequence = lambda current, endpoint: None
             with tempfile.TemporaryDirectory() as temporary:
                 lifecycle.ROOT = Path(temporary)
                 configure_vault_root(lifecycle.ROOT)
@@ -288,6 +293,7 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(len(published), 1)
                 self.assertNotIn("pending", json.loads(ciphertext.read_text()))
         finally:
+            lifecycle.migrate_legacy_crl_sequence = original_migration
             (lifecycle.ROOT, lifecycle.initial, lifecycle.stage_vault,
              lifecycle.publish, lifecycle.save, lifecycle.decrypt, lifecycle.recipient,
              lifecycle.vps_recipient, sys.argv) = original
@@ -330,11 +336,13 @@ class LifecycleTest(unittest.TestCase):
 
     def test_replace_server_stages_public_release_before_apply_retry(self):
         authority = state()
+        original_migration = lifecycle.migrate_legacy_crl_sequence
         original = (lifecycle.decrypt, lifecycle.save, lifecycle.replace_server,
                     lifecycle.save_server_vault, lifecycle.publish, lifecycle.recipient,
                     lifecycle.vps_recipient, sys.argv)
         staged, sops = [], []
         try:
+            lifecycle.migrate_legacy_crl_sequence = lambda current, endpoint: None
             with tempfile.TemporaryDirectory() as temporary:
                 ciphertext = Path(temporary) / "authority.age"
                 ciphertext.write_text(json.dumps(authority))
@@ -359,17 +367,20 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(len(staged), 2)
                 self.assertNotIn("pending", json.loads(ciphertext.read_text()))
         finally:
+            lifecycle.migrate_legacy_crl_sequence = original_migration
             (lifecycle.decrypt, lifecycle.save, lifecycle.replace_server,
              lifecycle.save_server_vault, lifecycle.publish, lifecycle.recipient,
              lifecycle.vps_recipient, sys.argv) = original
 
     def test_replace_server_retries_after_sops_oserror(self):
         authority = state()
+        original_migration = lifecycle.migrate_legacy_crl_sequence
         original = (lifecycle.decrypt, lifecycle.save, lifecycle.replace_server,
                     lifecycle.save_server_vault, lifecycle.publish, lifecycle.recipient,
                     lifecycle.vps_recipient, sys.argv)
         failed, published = [True], []
         try:
+            lifecycle.migrate_legacy_crl_sequence = lambda current, endpoint: None
             with tempfile.TemporaryDirectory() as temporary:
                 ciphertext = Path(temporary) / "authority.age"
                 ciphertext.write_text(json.dumps(authority))
@@ -392,6 +403,7 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(len(published), 1)
                 self.assertNotIn("pending", json.loads(ciphertext.read_text()))
         finally:
+            lifecycle.migrate_legacy_crl_sequence = original_migration
             (lifecycle.decrypt, lifecycle.save, lifecycle.replace_server,
              lifecycle.save_server_vault, lifecycle.publish, lifecycle.recipient,
              lifecycle.vps_recipient, sys.argv) = original
@@ -607,6 +619,7 @@ class LifecycleTest(unittest.TestCase):
 
     def test_persisted_transaction_retries_add_and_revoke_without_lost_update(self):
         authority = state()
+        original_migration = lifecycle.migrate_legacy_crl_sequence
         original = lifecycle.decrypt, lifecycle.save, lifecycle.publish, lifecycle.wg_pair, lifecycle.recipient, lifecycle.vps_recipient, sys.argv
         failures, server = [True, False, True, False], set()
         lifecycle.decrypt = lambda path: json.loads(path.read_text())
@@ -618,6 +631,7 @@ class LifecycleTest(unittest.TestCase):
                 raise lifecycle.Error("simulated remote verification failure")
             server.clear(); server.update(record["public"] for record in current["wireguard"]["clients"].values())
         lifecycle.publish = publish
+        lifecycle.migrate_legacy_crl_sequence = lambda current, endpoint: None
         import builtins
         original_input = builtins.input
         try:
@@ -640,10 +654,11 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(converged["wireguard"]["clients"], {})
                 self.assertEqual(server, set())
         finally:
+            lifecycle.migrate_legacy_crl_sequence = original_migration
             lifecycle.decrypt, lifecycle.save, lifecycle.publish, lifecycle.wg_pair, lifecycle.recipient, lifecycle.vps_recipient, sys.argv = original
             builtins.input = original_input
 
-    def test_server_vault_contains_the_current_ca_key_and_server_keys(self):
+    def test_server_vault_contains_only_server_keys(self):
         authority = state()
         original_root, original_run = lifecycle.ROOT, lifecycle.run
         original_recipient, original_vps = lifecycle.recipient, lifecycle.vps_recipient

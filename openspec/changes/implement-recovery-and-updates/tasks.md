@@ -1,12 +1,9 @@
 # Tasks
 
-> Server CRL renewal decision (2026-11-01): the VPS receives a protected CA
-> signing key. Earlier CA-preserving compromise-recovery decisions and checked
-> tests below apply only to the old controller-only CA boundary. Fresh-CA recovery
-> for the new boundary is implemented with synthetic regression coverage in
-> [fix-review-findings task 1.7](../fix-review-findings/tasks.md). Disposable-VM
-> renewal checks (1.6) and combined verification (2.1) remain open; earlier
-> results do not establish readiness for server-side renewal.
+> The 2026-11-01 VPS-signing decision is superseded by
+> `use-long-lived-controller-crl`. Checked VPS-signer evidence below is
+> historical only. Controller-only CRL implementation, sequence migration,
+> cleanup and verification remain unrun in that active change.
 
 > Historical migration note: completed SOPS/age references are superseded by
 > controller-only Ansible Vault and are not operative tasks.

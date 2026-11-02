@@ -89,8 +89,6 @@ ssh-notify-config: |
 EOF
 ansible-vault encrypt --vault-password-file "$tmp/controller/vault-password" --output "$tmp/repo/secrets/server.yaml" "$tmp/controller/server.yaml"
 cat > "$tmp/controller/vpn-server.yaml" <<EOF
-openvpn-ca-key: |
-$(sed 's/^/  /' "$tmp/controller/ca.key")
 openvpn-server-key: |
 $(sed 's/^/  /' "$tmp/controller/server.key")
 wireguard-server-key: $wg_private

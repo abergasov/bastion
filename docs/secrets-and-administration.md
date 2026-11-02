@@ -1,12 +1,10 @@
 # Секреты и административный доступ
 
-Целевая модель после решения о серверном продлении CRL разрешает отдельную
-защищённую копию ключа CA на VPS. Клиентские приватные ключи, полная authority,
-SSH private key администратора и пароль Vault остаются на контроллере.
-Проекция доставляется только как root-owned runtime secret для renewal service;
-ниже описан её текущий контракт.
-Не копируйте весь authority-файл вместо отдельного ключа. После раскрытия
-серверного ключа CA восстановление требует нового CA и профилей.
+Целевая модель держит CA private key, клиентские приватные ключи, полную
+authority, SSH private key администратора и пароль Vault только на controller.
+VPS получает подписанный CRL и public records, но не CA key, его projection,
+renewal service или timer. При подтверждённом старом exposure CA нужны новый CA
+и profiles; обычная VPS compromise без такого exposure этого не требует.
 
 Скопируйте `inventory/secrets-input.json.example` в игнорируемый
 `inventory/secrets-input.json`. Он содержит public Ed25519 admin key, абсолютный
@@ -19,13 +17,11 @@ controller-only `vault_password_file` и repo-relative `vault_secrets_file`.
 и доставляют отдельные required files как `root:root 0600` в
 `/var/lib/bastion/secrets` (каталог `0700`). Boot activation атомарно заменяет
 `/run/secrets/bastion`; Vault password и ciphertext на VPS не попадают. Runtime
-paths remain `/run/secrets/bastion/openvpn-ca-key`,
-`/run/secrets/bastion/openvpn-server-key`,
+paths remain `/run/secrets/bastion/openvpn-server-key`,
 `/run/secrets/bastion/wireguard-server-key` and
-`/run/secrets/bastion/ssh-notify.conf`. The CA key is the explicit root-only
-exception used solely by the CRL renewal service; client keys, SSH seeds and the
-full authority remain excluded. Public enrollment/revocation data is deployed
-separately.
+`/run/secrets/bastion/ssh-notify.conf`. CA key, client keys, SSH seeds and the
+full authority remain excluded. Public enrollment/revocation data and the signed
+CRL are deployed separately.
 
 Bootstrap creates `admin` and its public key while the provider session remains
 usable. The first `make apply` must establish a fresh `admin` SSH connection and
@@ -37,10 +33,9 @@ without project retry, ban-duration, exemption, backend or firewall-policy overr
 
 For approved Vault import, decrypt only in a protected temporary directory outside
 this repository, transfer only required values to Ansible Vault ciphertext, then remove
-the temporary plaintext. Never copy the Vault password, SSH seed/private key,
-client private state or the full authority to the VPS. The CA key uses the
-separate protected root-only renewal projection. This remains local preparation,
-not live rollout.
+the temporary plaintext. Never copy the Vault password, CA key, SSH seed/private
+key, client private state or the full authority to the VPS. This remains local
+preparation, not live rollout.
 The synthetic import contract test treats a read-only Vault view as its source,
 selects exactly the four server values into a protected staging file, verifies the
 source hash did not change, and rejects Vault password, SSH seed and owner-only

@@ -3,12 +3,11 @@
 > Historical note: remaining age/SOPS/recipient wording below is superseded
 > evidence. Current recovery uses controller-only Ansible Vault.
 
-После проекции CA key на VPS подтверждённая compromise сервера означает
-компрометацию CA. Обязательны новый CA, новые server/device credentials и
-profiles, явное повторное enrollment устройств и ротация host secrets.
-`recover-compromised` намеренно отказывается от CA-preserving path; используйте
-`recover-fresh`. Старый CA, client keys, certificates и profiles не переносятся
-в новую trust domain и не дают права на доступ.
+CA private key остаётся только на controller; обычная compromise VPS не делает
+CA скомпрометированным. Она требует recreation и ротации host-accessible
+secrets. Новый CA, новые server/device credentials и явный enrollment нужны
+только при доказанном предыдущем CA-key projection на этот VPS; тогда старые CA
+trust, certificates и profiles не переносятся в новую trust domain.
 
 Это операторская процедура обычной замены VPS без подтверждённой компрометации.
 Она дополняет выполненные lifecycle-задачи 2.1–2.4
@@ -26,14 +25,15 @@ profiles, явное повторное enrollment устройств и рот�
 key также не является обязательным входом; сохранение прежних подключений
 не гарантируется.
 
-При подтверждённой compromise VPS не используйте обычную замену и не пытайтесь
-сохранить CA через `recover-compromised`: команда безопасно откажется до чтения
-authority. На доверенном компьютере подготовьте mode-0600 replacement JSON и
-запустите `recover-fresh` с отсутствующим authority ciphertext. Fresh path
-создаёт новый CA и complete Vault ciphertext `server.yaml` и `vpn-server.yaml`,
-включая новый CA projection; затем каждый authorised device получает новую
-credential и profile через явный enrollment. Current-authority marker защищает
-обычные операции от stale ciphertext, но не делает старый CA безопасным.
+При подтверждённой compromise VPS сначала установите, был ли CA когда-либо
+спроецирован на этот VPS. Без такого exposure сохраните controller CA, но
+пересоздайте VPS и ротируйте host secrets. При подтверждённом старом exposure
+подготовьте mode-0600 replacement JSON и запустите `recover-fresh` с
+отсутствующим authority ciphertext: fresh path создаёт новый CA и complete Vault
+ciphertext `server.yaml` и `vpn-server.yaml` без CA projection; затем каждый
+authorised device получает новую credential и profile через явный enrollment.
+Current-authority marker защищает обычные операции от stale ciphertext, но не
+делает ранее раскрытый CA безопасным.
 
 На доверенном компьютере проверьте наличие controller Vault password source и актуальных локальных
 CA/client keys, записей выдачи и отзывов. GitHub содержит только committed и
@@ -75,13 +75,13 @@ sudo согласно installation workflow. Доступ к консоли ст
 
 - Проверенный новый SSH host key в `inventory/known_hosts`; owner SSH private key
   остаётся вне VPS.
-- Новый CA и новый OpenVPN server key/certificate; не восстанавливайте прежние
-  key/certificate или profiles. Vault ciphertext хранит CA projection и server
-  keys для delivery, а Vault password остаётся на controller.
+- Новый OpenVPN server key/certificate и replacement profiles; новый CA нужен
+  только после подтверждённого прежнего CA exposure. Vault ciphertext хранит
+  только server keys для delivery, а Vault password и CA остаются на controller.
 
-Client private keys и authoritative records остаются локально в owner-only
-Vault ciphertext. На VPS публикуются только public membership data; отдельная
-root-only CA projection и server private keys поступают в защищённые runtime files.
+Client private keys, CA и authoritative records остаются локально в owner-only
+Vault ciphertext. На VPS публикуются только public membership data, signed CRL
+и server private keys в защищённых runtime files.
 Не помещайте plaintext, профили или private keys
 в inventory, Git, логи или аргументы команд. Не восстанавливайте membership из
 старого playbook или ciphertext без сверки отзывов до открытия VPN listeners.

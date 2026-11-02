@@ -1,4 +1,4 @@
-.PHONY: bootstrap apply maintenance test recovery-integration-test syntax ssh-notifications-test ssh-notifications-vm-test vpn-vm-test vpn-add-wg vpn-add-open vpn-list-wg vpn-list-open vpn-export-wg vpn-export-open vpn-revoke-wg vpn-revoke-open vpn-renew-open
+.PHONY: bootstrap apply maintenance test recovery-integration-test syntax ssh-notifications-test ssh-notifications-vm-test vpn-vm-test vpn-add-wg vpn-add-open vpn-list-wg vpn-list-open vpn-export-wg vpn-export-open vpn-revoke-wg vpn-revoke-open vpn-migrate-open
 
 export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export VPN_HOST CLIENT
@@ -38,7 +38,6 @@ test:
 	SSH_NOTIFY_SKIP_PACKAGE_TEST=1 ./tests/ssh-notifications-test.sh
 	python3 ./tests/device-lifecycle-test.py
 	python3 ./tests/crl-renewal-test.py
-	./tests/server-crl-renewal-test.sh
 	python3 ./tests/authority-marker-test.py
 
 recovery-integration-test:
@@ -73,6 +72,6 @@ vpn-revoke-wg vpn-revoke-open:
 	@test -n "$${VPN_HOST:-}" || (echo 'VPN_HOST is required' >&2; exit 2)
 	python3 ./scripts/bastion-vpn-lifecycle $(patsubst vpn-%,%,$@) --vpn-host "$${VPN_HOST}"
 
-vpn-renew-open:
+vpn-migrate-open:
 	@test -n "$${VPN_HOST:-}" || (echo 'VPN_HOST is required' >&2; exit 2)
-	python3 ./scripts/bastion-vpn-lifecycle renew-open --vpn-host "$${VPN_HOST}"
+	python3 ./scripts/bastion-vpn-lifecycle migrate-crl --vpn-host "$${VPN_HOST}"

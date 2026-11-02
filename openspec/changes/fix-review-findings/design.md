@@ -1,5 +1,10 @@
 # Design
 
+> **Superseded CRL design.** Every VPS CA-key projection, signer, timer,
+> server-generated CRL state and renewal-notification statement below records
+> the 2026-11-01 design and its historical evidence only. It is superseded by
+> `use-long-lived-controller-crl`; it does not prescribe current behavior.
+
 ## Context
 
 See proposal.md. The owner requested one agent per finding. Two pairs share files:

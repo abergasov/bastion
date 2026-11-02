@@ -2,9 +2,9 @@
 
 Transferred from AGENTS.md on 2026-10-19. This document is non-normative: proposals are not approved decisions. Where the original discussion repeats a confirmed constraint, the normative requirement lives in [the specifications](../README.md). Resolve choices with the owner before implementing the affected behavior.
 
-## Confirmed decision — 2026-11-01: autonomous CRL renewal on the VPS
+## Superseded decision — 2026-11-01: autonomous CRL renewal on the VPS
 
-The owner identified manual CRL renewal as a specification error and explicitly
+The owner then superseded this decision on 2026-11-02. The owner had identified manual CRL renewal as a specification error and explicitly
 chose the VPS itself to perform automatic signing and activation, independently
 of the administrator's computer. This supersedes the intervening controller-timer
 proposal and the earlier blanket ban on deploying the CA private key.
@@ -23,14 +23,17 @@ See [device-lifecycle](../specs/device-lifecycle/spec.md),
 [recovery](../specs/recovery-and-verification/spec.md) and the reopened
 [implementation tasks](../changes/fix-review-findings/tasks.md).
 
-The implementation uses a native systemd timer with daily checks, a seven-day
+The historical implementation used a native systemd timer with daily checks, a seven-day
 renewal window and persistent catch-up; these timings are design defaults, not
 additional owner decisions. The server must serialize renewal with publication,
 retain current revocations across reboot/reapply and reject stale controller
 state. Synthetic regression coverage is recorded in the implementation tasks;
 disposable-VM renewal checks and combined verification remain open as tasks 1.6
 and 2.1. Earlier manual-renewal and CA-preserving recovery tests do not verify
-this behavior. Historical decisions below remain history where superseded.
+this behavior. The current [controller-only CRL change](../changes/use-long-lived-controller-crl/proposal.md)
+requires local signing with `nextUpdate` bounded by 3650 days and CA expiry,
+then safe removal of the CA projection/signer. CA rotation is required only if
+the old VPS projection exposed it. Historical decisions below remain history.
 
 ## Confirmed decision — 2026-11-01: replace the firewall with UFW
 

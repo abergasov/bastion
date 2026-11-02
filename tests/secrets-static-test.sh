@@ -17,7 +17,9 @@ rg -q "mode: '0600'" "$role"
 rg -q 'mv -Tf "\$link_path" "\$runtime_link"' "$runtime"
 rg -q 'vpn_keys=0' "$runtime"
 rg -q 'openssl pkey' "$runtime"
-rg -q 'openvpn-ca-key' "$role" "$runtime" scripts/preflight-secrets
+! rg -q 'openvpn-ca-key' scripts/preflight-secrets
+rg -q 'legacy_ca_key' "$runtime"
+! rg -q 'Remove obsolete persistent OpenVPN CA key' "$role"
 rg -q 'ssh-notify.conf' "$role" "$runtime"
 rg -q 'Reapply validated VPN state after secret activation' roles/vpn/tasks/main.yml
 rg -q 'bastion_secrets_changed' roles/vpn/tasks/main.yml

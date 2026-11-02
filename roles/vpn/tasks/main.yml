@@ -64,7 +64,6 @@
     - bastion-vpn-apply-state-once
     - bastion-vpn-apply-state
     - bastion-vpn-publish-state
-    - bastion-vpn-renew-crl
     - bastion-vpn-cleanup
     - bastion-vpn-stop
 
@@ -77,16 +76,7 @@
     mode: '0644'
   loop:
     - bastion-vpn-apply.service
-    - bastion-vpn-renew-crl.service
-    - bastion-vpn-renew-crl-activate.service
-    - bastion-vpn-renew-crl.timer
   notify: Reload systemd
-
-- name: Enable daily CRL renewal timer
-  ansible.builtin.systemd_service:
-    name: bastion-vpn-renew-crl.timer
-    enabled: true
-    state: started
 
 - name: Create secrets cleanup drop-in directory
   ansible.builtin.file:
@@ -111,8 +101,7 @@
     content: |
       [Unit]
       Requires=bastion-secrets.service
-      Requires=bastion-vpn-renew-crl.service
-      After=bastion-secrets.service bastion-vpn-renew-crl.service
+      After=bastion-secrets.service
 
       [Service]
       ExecStartPre=/usr/local/libexec/bastion-vpn-verify-state /run/bastion-vpn/active
@@ -223,6 +212,112 @@
     - (vpn_current_state.stat.islnk | default(false)) or
       (vpn_current_state.stat.exists | default(false))
     - vpn_state_verification.rc == 0
+
+- name: Check for legacy VPS CRL signer artifacts
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /var/lib/bastion/secrets/openvpn-ca-key
+    - /run/secrets/bastion/openvpn-ca-key
+    - /usr/local/libexec/bastion-vpn-renew-crl
+    - /etc/systemd/system/bastion-vpn-renew-crl.timer
+    - /etc/systemd/system/bastion-vpn-renew-crl.service
+    - /etc/systemd/system/bastion-vpn-renew-crl-activate.service
+    - /var/lib/bastion/vpn/crl-status.json
+  register: vpn_legacy_crl_artifacts
+  changed_when: false
+
+- name: Record whether legacy VPS CRL signer cleanup is required
+  ansible.builtin.set_fact:
+    vpn_legacy_signer_present: >-
+      {{ vpn_legacy_crl_artifacts.results | selectattr('stat.exists') | list | length > 0 }}
+  changed_when: false
+
+- name: Require verified published VPN state before signer cleanup
+  ansible.builtin.assert:
+    that:
+      - (vpn_current_state.stat.islnk | default(false)) or (vpn_current_state.stat.exists | default(false))
+      - vpn_state_verification.rc | default(1) == 0
+    fail_msg: A verified published VPN state is required before removing CRL signer material.
+  when: vpn_legacy_signer_present
+
+- name: Require a long-lived controller CRL before signer cleanup
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state=$(/usr/local/libexec/bastion-vpn-verify-state)
+    next_update=$(openssl crl -in "$state/openvpn/crl.pem" -noout -nextupdate | sed -n 's/^nextUpdate=//p')
+    test "$(date -u -d "$next_update" +%s)" -gt "$(( $(date -u +%s) + 311040000 ))"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  register: vpn_long_lived_crl
+  when: vpn_legacy_signer_present
+
+- name: Remove obsolete persistent OpenVPN CA key after controller CRL activation
+  ansible.builtin.file:
+    path: /var/lib/bastion/secrets/openvpn-ca-key
+    state: absent
+  notify: Restart Bastion secrets
+  register: vpn_ca_key_cleanup
+  when:
+    - vpn_legacy_signer_present
+    - vpn_long_lived_crl.rc | default(1) == 0
+
+- name: Refresh runtime secrets after CA key cleanup
+  ansible.builtin.meta: flush_handlers
+  when:
+    - vpn_legacy_signer_present
+    - vpn_long_lived_crl.rc | default(1) == 0
+    - vpn_ca_key_cleanup.changed
+
+- name: Check obsolete VPS CRL signer unit presence
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=LoadState
+      - --value
+      - "{{ item }}"
+  loop:
+    - bastion-vpn-renew-crl.timer
+    - bastion-vpn-renew-crl.service
+    - bastion-vpn-renew-crl-activate.service
+  register: vpn_signer_units
+  changed_when: false
+  failed_when: >-
+    vpn_signer_units.rc != 0 and
+    'not found' not in (vpn_signer_units.stderr | lower) and
+    'not be found' not in (vpn_signer_units.stderr | lower)
+  when:
+    - vpn_legacy_signer_present
+    - vpn_long_lived_crl.rc | default(1) == 0
+
+- name: Stop and disable present VPS CRL signer units
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ vpn_signer_units.results }}"
+  when:
+    - vpn_legacy_signer_present
+    - vpn_long_lived_crl.rc | default(1) == 0
+    - item.rc == 0
+    - item.stdout | trim != 'not-found'
+
+- name: Remove obsolete VPS CRL signer files and status
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/libexec/bastion-vpn-renew-crl
+    - /etc/systemd/system/bastion-vpn-renew-crl.timer
+    - /etc/systemd/system/bastion-vpn-renew-crl.service
+    - /etc/systemd/system/bastion-vpn-renew-crl-activate.service
+    - /var/lib/bastion/vpn/crl-status.json
+  notify: Reload systemd
+  when:
+    - vpn_legacy_signer_present
+    - vpn_long_lived_crl.rc | default(1) == 0
 
 - name: Apply VPN sysctl before state activation
   ansible.builtin.meta: flush_handlers

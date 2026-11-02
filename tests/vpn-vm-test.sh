@@ -24,7 +24,7 @@ umask 077
 vm_pid=''
 peer_pid=''
 keep_fixture=${BASTION_VPN_VM_KEEP:-0}
-crl_only=${BASTION_VPN_VM_CRL_ONLY:-0}
+crl_only=0
 seeded_cleanup_ready=0
 seeded_server_helper=''
 cleanup() {
@@ -191,8 +191,6 @@ ssh-notify-config: |
 EOF
 ANSIBLE_LOCAL_TEMP="$tmp_root/ansible-vault" ansible-vault encrypt --vault-password-file "$vault_password" --output "$tmp_root/secrets/server.yaml" "$tmp_root/secrets/plain.yaml"
 cat > "$tmp_root/secrets/vpn-server.yaml" <<EOF
-openvpn-ca-key: |
-$(sed 's/^/  /' "$tmp_root/peer/ca.key")
 openvpn-server-key: |
 $(sed 's/^/  /' "$tmp_root/peer/server.key")
 wireguard-server-key: $(openssl rand -base64 32 | tr -d '\n')
@@ -201,17 +199,6 @@ ANSIBLE_LOCAL_TEMP="$tmp_root/ansible-vault-vpn" ansible-vault encrypt --vault-p
 mv "$tmp_root/secrets/vpn-server.vault.yaml" "$tmp_root/secrets/vpn-server.yaml"
 rm -f "$tmp_root/secrets/plain.yaml" "$tmp_root/password-hash"
 
-if test "$crl_only" = 1; then
-cat > "$tmp_root/playbooks/vpn.yml" <<'EOF'
----
-- hosts: bastion_admin
-  remote_user: admin
-  become: true
-  become_method: ansible.builtin.su
-  gather_facts: true
-  roles: [secrets_administration, vpn]
-EOF
-else
 cat > "$tmp_root/playbooks/vpn.yml" <<'EOF'
 ---
 - hosts: bastion_admin
@@ -228,7 +215,6 @@ cat > "$tmp_root/playbooks/vpn.yml" <<'EOF'
         group: root
         mode: '0700'
 EOF
-fi
 admin_public_key_value=$(<"$admin_public_key")
 cat > "$tmp_root/inventory.yml" <<EOF
 all:
@@ -296,25 +282,6 @@ PEER_NET
 ssh_common="-F /dev/null -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=$tmp_root/known_hosts -o StrictHostKeyChecking=yes"
 ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$bootstrap_become_password" --ssh-common-args="$ssh_common" --module-name shell --args 'growpart /dev/vda 1 && resize2fs /dev/vda1 && test "$(df --output=avail -k / | tail -n1)" -gt 10485760'
 ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$bootstrap_become_password" --ssh-common-args="$ssh_common" --module-name script --args "$tmp_root/server-net.sh"
-if test "$crl_only" = 1; then
-  # The retained disposable image may contain an expired apt lists snapshot.
-  # Refresh it in the test VM; production package selection remains unpinned.
-  ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$bootstrap_become_password" --ssh-common-args="$ssh_common" --module-name ansible.builtin.apt --args 'update_cache=true cache_valid_time=0'
-  ansible-playbook -i "$tmp_root/inventory.yml" "$tmp_root/playbooks/vpn.yml" --vault-password-file "$vault_password" --extra-vars vault_secrets_file=secrets/server.yaml --extra-vars vpn_fixture_states="$tmp_root/public-states" --extra-vars bastion_apply_final_ssh_policy=false --become-password-file "$tmp_root/become-password" --extra-vars "{\"ansible_ssh_common_args\":\"$ssh_common\"}" --ssh-common-args="$ssh_common" | tee "$tmp_root/crl-provision.log"
-  rg -q 'bastion[[:space:]]*:.*failed=0' "$tmp_root/crl-provision.log" || { echo 'vpn-vm-test: CRL-only playbook did not report successful bastion recap' >&2; exit 1; }
-  scp -r -F /dev/null -i "$private_key" -P "$port" -o BatchMode=yes -o ConnectTimeout=3 -o GlobalKnownHostsFile=/dev/null -o "UserKnownHostsFile=$tmp_root/known_hosts" -o StrictHostKeyChecking=yes "$tmp_root/public-states" admin@127.0.0.1:/tmp/bastion-vpn-fixture-states
-  ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$tmp_root/become-password" --ssh-common-args="$ssh_common" --module-name script --args 'tests/vpn-vm-guest-test.sh /tmp/bastion-vpn-fixture-states --crl-renewal-prepare' | tee "$tmp_root/crl-prepare.log"
-  rg -q 'VPN_VM_CRL_PRE_BOOT_READY' "$tmp_root/crl-prepare.log" || { echo 'vpn-vm-test: CRL-only guest did not prepare boot-gate scenario' >&2; exit 1; }
-  ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$tmp_root/become-password" --ssh-common-args="$ssh_common" --module-name reboot --args 'reboot_timeout=120'
-  ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$tmp_root/become-password" --ssh-common-args="$ssh_common" --module-name script --args 'tests/vpn-vm-guest-test.sh /tmp/bastion-vpn-fixture-states --crl-renewal-assert-boot' | tee "$tmp_root/crl-boot.log"
-  rg -q 'VPN_VM_CRL_BOOT_GATE_PASS' "$tmp_root/crl-boot.log" || { echo 'vpn-vm-test: CRL-only boot gate marker missing' >&2; exit 1; }
-  ansible-playbook -i "$tmp_root/inventory.yml" "$tmp_root/playbooks/vpn.yml" --vault-password-file "$vault_password" --extra-vars vault_secrets_file=secrets/server.yaml --extra-vars vpn_fixture_states="$tmp_root/public-states" --extra-vars bastion_apply_final_ssh_policy=false --become-password-file "$tmp_root/become-password" --extra-vars "{\"ansible_ssh_common_args\":\"$ssh_common\"}" --ssh-common-args="$ssh_common" | tee "$tmp_root/crl-reapply.log"
-  rg -q 'bastion[[:space:]]*:.*failed=0' "$tmp_root/crl-reapply.log" || { echo 'vpn-vm-test: CRL-only reapply did not report successful bastion recap' >&2; exit 1; }
-  ansible -i "$tmp_root/inventory.yml" bastion_admin --user admin --become --become-method=ansible.builtin.su --become-password-file "$tmp_root/become-password" --ssh-common-args="$ssh_common" --module-name script --args 'tests/vpn-vm-guest-test.sh /tmp/bastion-vpn-fixture-states --crl-renewal-assert-reapply' | tee "$tmp_root/crl-reapply-assert.log"
-  rg -q 'VPN_VM_CRL_REAPPLY_PASS' "$tmp_root/crl-reapply-assert.log" || { echo 'vpn-vm-test: CRL-only reapply assertion marker missing' >&2; exit 1; }
-  echo 'VPN VM CRL renewal checks passed.'
-  exit 0
-fi
 ansible -i "$tmp_root/peer-inventory.yml" all --become --become-method=ansible.builtin.su --become-password-file "$bootstrap_become_password" --ssh-common-args="$ssh_common" --module-name script --args "$tmp_root/peer-net.sh"
 "${ansible_inventory[@]}" | rg -q '"bastion"' || { echo 'vpn-vm-test: inventory has no bastion host' >&2; exit 1; }
 set +e

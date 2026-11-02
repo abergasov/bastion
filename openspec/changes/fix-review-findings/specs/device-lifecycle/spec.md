@@ -1,5 +1,9 @@
 # Spec Delta
 
+> **Superseded delta.** This VPS-signer delta records the 2026-11-01 target and
+> historical evidence only. `use-long-lived-controller-crl` replaces it; this
+> file does not prescribe current baseline behavior.
+
 ## MODIFIED Requirements
 
 ### Requirement: Local credential issuance and public server state
@@ -110,6 +114,11 @@ setting alone is not evidence of fail-closed behavior.
 - **WHEN** a CRL is missing, unreadable, invalid or expired during verification
 - **THEN** the observed admission behavior is checked and documented
 - **AND** readiness is not claimed if revoked credentials can regain access
+
+#### Scenario: Migrate a historical VPS signer without membership change
+- **WHEN** the administrator runs the current controller-only migration command for a historical VPS signer
+- **THEN** it verifies and seeds sequence before locally signing, publishing and activating the replacement CRL
+- **AND** membership, device credentials and revocations remain unchanged
 
 ### Requirement: Renew OpenVPN revocation information
 
